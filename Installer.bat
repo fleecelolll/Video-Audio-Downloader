@@ -36,7 +36,7 @@ set "DENO_EXE=%DENO_DIR%\deno.exe"
 set "PYTHON_VERSION=3.14.6"
 set "PYSIDE_VERSION=6.11.1"
 set "FFMPEG_VERSION=8.1.2"
-set "DENO_VERSION=2.9.2"
+set "DENO_VERSION=2.9.3"
 set "PYPI_INDEX=https://pypi.org/simple"
 
 set "FFMPEG_URL=https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip"
@@ -53,16 +53,16 @@ goto Failed
 set "ARCH=x64"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip"
 set "PYTHON_SHA256=DF901E84A896FF1EE720AD03377E0C8D8C2244FDA79808AEEAFF6316DF1CB75C"
-set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-pc-windows-msvc.zip"
-set "DENO_SHA256=5FE194D26AC5EF77FCC5288C2C438C7A0465F3B6180440EBF04092714BF2DCDF"
+set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.3/deno-x86_64-pc-windows-msvc.zip"
+set "DENO_SHA256=60343461AC5FE3A31F4EF12667F2946BB852E20655C8610AEB7E751E87F7DF3A"
 goto ArchitectureReady
 
 :ArchitectureArm64
 set "ARCH=arm64"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-arm64.zip"
 set "PYTHON_SHA256=0A7E80914709A9F3EBFCCDB9D1D02A37E4DDB69BB7F80D6DF1A7E95D54AF9E58"
-set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.2/deno-aarch64-pc-windows-msvc.zip"
-set "DENO_SHA256=28B57DC03BE79EC312EE7BAF30678865D84C7CB3764AC7DA36E242ABEA6B3B1D"
+set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.3/deno-aarch64-pc-windows-msvc.zip"
+set "DENO_SHA256=BC668F199E4892F4447661F253178AF007A4D715B0FF67493573B0E0216389AE"
 
 :ArchitectureReady
 >>"%LOG%" echo.

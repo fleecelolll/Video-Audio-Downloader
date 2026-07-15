@@ -7,7 +7,7 @@ a simple windows app for downloading video or audio from supported sites.
 </div>
 
 <p align="center">
-  <img src="video-downloader-transparent.png" alt="video + audio downloader" width="691">
+  <img src="Video Downloader.png" alt="video + audio downloader" width="691">
 </p>
 
 ## features

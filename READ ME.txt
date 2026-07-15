@@ -1,0 +1,1 @@
+The installer sometimes gets stuck, if relaunching it doesnt work then try running as admin.

@@ -1,0 +1,7 @@
+.venv/
+.runtime/
+.setup-temp/
+setup.log
+__pycache__/
+*.py[cod]
+

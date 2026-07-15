@@ -1,36 +1,186 @@
+import codecs
+import ctypes
+import os
 import re
+import subprocess
 import sys
+import tempfile
+import traceback
+from importlib import metadata
 from pathlib import Path
+from urllib.parse import urlparse
 
-from PySide6.QtCore import (
-    QEasingCurve,
-    QEvent,
-    QPoint,
-    QParallelAnimationGroup,
-    QProcess,
-    QPropertyAnimation,
-    QRect,
-    Qt,
-    Signal,
+
+APP_DIR = Path(__file__).resolve().parent
+RUNTIME_DIR = APP_DIR / ".runtime"
+VENV_PYTHONW = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
+EMBEDDED_PYTHONW = RUNTIME_DIR / "python" / "pythonw.exe"
+DENO_DATA_DIR = RUNTIME_DIR / "deno-data"
+YTDLP_CACHE_DIR = RUNTIME_DIR / "yt-dlp-cache"
+SETTINGS_PATH = RUNTIME_DIR / "settings.ini"
+
+
+def show_native_setup_error(message):
+    title = "Video Downloader"
+    if os.name == "nt":
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
+    else:
+        print(f"{title}: {message}", file=sys.stderr)
+
+
+def bootstrap_local_python():
+    local_pythonw = next(
+        (
+            candidate
+            for candidate in (VENV_PYTHONW, EMBEDDED_PYTHONW)
+            if candidate.is_file()
+        ),
+        None,
+    )
+    if local_pythonw is None:
+        show_native_setup_error(
+            "Setup is missing or incomplete.\n\n"
+            "Run Installer.bat, let it finish, then open this file again."
+        )
+        raise SystemExit(1)
+
+    current = os.path.normcase(os.path.realpath(sys.executable))
+    expected = os.path.normcase(os.path.realpath(local_pythonw))
+    if current == expected:
+        return
+
+    try:
+        subprocess.Popen(
+            [str(local_pythonw), str(Path(__file__).resolve()), *sys.argv[1:]],
+            cwd=str(APP_DIR),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError:
+        show_native_setup_error(
+            "The app's Python could not start.\n\n"
+            "Run Installer.bat again to repair the setup."
+        )
+        raise SystemExit(1)
+
+    raise SystemExit(0)
+
+
+if __name__ == "__main__":
+    bootstrap_local_python()
+
+
+try:
+    from PySide6.QtCore import (
+        QEasingCurve,
+        QEvent,
+        QPoint,
+        QParallelAnimationGroup,
+        QProcess,
+        QProcessEnvironment,
+        QPropertyAnimation,
+        QRect,
+        QSettings,
+        QStandardPaths,
+        QTimer,
+        Qt,
+        Signal,
+    )
+    from PySide6.QtGui import (
+        QCloseEvent,
+        QMouseEvent,
+        QPainter,
+        QPen,
+        QTextCursor,
+    )
+    from PySide6.QtWidgets import (
+        QApplication,
+        QFileDialog,
+        QFrame,
+        QGraphicsOpacityEffect,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QListWidget,
+        QMainWindow,
+        QPushButton,
+        QProgressBar,
+        QSizePolicy,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
+except Exception:
+    if __name__ == "__main__":
+        show_native_setup_error(
+            "Setup is incomplete and the app window cannot load.\n\n"
+            "Run Installer.bat again to repair the setup."
+        )
+        raise SystemExit(1)
+    raise
+
+
+RUNTIME_PATHS = (
+    RUNTIME_DIR / "ffmpeg" / "bin",
+    RUNTIME_DIR / "ffmpeg",
+    RUNTIME_DIR / "deno",
+    RUNTIME_DIR / "bin",
+    RUNTIME_DIR,
 )
-from PySide6.QtGui import QCloseEvent, QMouseEvent, QPainter, QPen
-from PySide6.QtWidgets import (
-    QApplication,
-    QFileDialog,
-    QFrame,
-    QGraphicsOpacityEffect,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QMainWindow,
-    QPushButton,
-    QProgressBar,
-    QSizePolicy,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+
+
+def runtime_path_value(existing_path=None):
+    existing_path = existing_path if existing_path is not None else os.environ.get(
+        "PATH", ""
+    )
+    entries = [str(path) for path in RUNTIME_PATHS if path.is_dir()]
+    if existing_path:
+        entries.append(existing_path)
+    return os.pathsep.join(entries)
+
+
+def qprocess_environment():
+    environment = QProcessEnvironment.systemEnvironment()
+    environment.insert("PATH", runtime_path_value(environment.value("PATH")))
+    environment.insert("PYTHONUTF8", "1")
+    environment.insert("PYTHONIOENCODING", "utf-8")
+    environment.insert("DENO_DIR", str(DENO_DATA_DIR))
+    return environment
+
+
+def subprocess_environment():
+    environment = os.environ.copy()
+    environment["PATH"] = runtime_path_value(environment.get("PATH", ""))
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["DENO_DIR"] = str(DENO_DATA_DIR)
+    return environment
+
+
+def handle_unhandled_exception(error_type, error, trace):
+    try:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        (RUNTIME_DIR / "error.log").write_text(
+            "".join(traceback.format_exception(error_type, error, trace)),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    show_native_setup_error(
+        "The app stopped because of an unexpected error.\n\n"
+        "Run Installer.bat again. If it still happens, check .runtime\\error.log."
+    )
+    application = QApplication.instance()
+    if application is not None:
+        application.quit()
+
+
+def local_runtime_executable(name):
+    filename = f"{name}.exe" if os.name == "nt" else name
+    for directory in RUNTIME_PATHS:
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 class TrafficLightButton(QPushButton):
@@ -353,7 +503,8 @@ class SitesWindow(QWidget):
         self.loaded = False
         self.list_process = None
         self.version_process = None
-        self.output_buffer = ""
+        self.output_buffer = bytearray()
+        self.error_buffer = bytearray()
 
         self.setWindowTitle("Supported sites")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
@@ -431,18 +582,25 @@ class SitesWindow(QWidget):
             return
 
         self.list_widget.clear()
-        self.output_buffer = ""
+        self.output_buffer.clear()
+        self.error_buffer.clear()
         self.count_label.setText("Loading…")
 
         self.version_process = QProcess(self)
+        self.version_process.setProcessEnvironment(qprocess_environment())
+        self.version_process.setWorkingDirectory(str(APP_DIR))
         self.version_process.finished.connect(self.version_finished)
+        self.version_process.errorOccurred.connect(self.version_error)
         self.version_process.start(
             self.python_path,
             ["-m", "yt_dlp", "--ignore-config", "--version"],
         )
 
         self.list_process = QProcess(self)
+        self.list_process.setProcessEnvironment(qprocess_environment())
+        self.list_process.setWorkingDirectory(str(APP_DIR))
         self.list_process.readyReadStandardOutput.connect(self.read_list_output)
+        self.list_process.readyReadStandardError.connect(self.read_list_error)
         self.list_process.finished.connect(self.list_finished)
         self.list_process.errorOccurred.connect(self.list_error)
         self.list_process.start(
@@ -459,13 +617,23 @@ class SitesWindow(QWidget):
     def read_list_output(self):
         if not self.list_process:
             return
-        self.output_buffer += bytes(
-            self.list_process.readAllStandardOutput()
-        ).decode("utf-8", errors="replace")
+        self.output_buffer.extend(bytes(self.list_process.readAllStandardOutput()))
+
+    def read_list_error(self):
+        if not self.list_process:
+            return
+        self.error_buffer.extend(bytes(self.list_process.readAllStandardError()))
+
+    def show_list_failure(self):
+        error_text = self.error_buffer.decode("utf-8", errors="replace").strip()
+        self.count_label.setText(
+            "Could not run yt-dlp. Re-run installer.bat to repair setup."
+        )
+        self.count_label.setToolTip(error_text[-1000:] if error_text else "")
 
     def version_finished(self, exit_code, exit_status):
         version = ""
-        if self.version_process:
+        if self.version_process and exit_code == 0:
             version = bytes(
                 self.version_process.readAllStandardOutput()
             ).decode("utf-8", errors="replace").strip()
@@ -477,15 +645,26 @@ class SitesWindow(QWidget):
                 "installer.bat to update yt-dlp and this list."
             )
 
+    def version_error(self, error):
+        if self.version_process and error == QProcess.FailedToStart:
+            self.version_process = None
+
     def list_finished(self, exit_code, exit_status):
         self.read_list_output()
+        self.read_list_error()
         self.list_process = None
         self.loaded = True
+
+        if exit_code != 0:
+            self.show_list_failure()
+            return
+
+        output_text = self.output_buffer.decode("utf-8", errors="replace")
 
         names = sorted(
             {
                 line.strip()
-                for line in self.output_buffer.splitlines()
+                for line in output_text.splitlines()
                 if line.strip()
             },
             key=str.lower,
@@ -501,10 +680,9 @@ class SitesWindow(QWidget):
         self.apply_filter(self.search_input.text())
 
     def list_error(self, error):
+        self.read_list_error()
         self.list_process = None
-        self.count_label.setText(
-            "Could not load the list. Make sure yt-dlp is installed."
-        )
+        self.show_list_failure()
 
     def apply_filter(self, text):
         text = text.strip().lower()
@@ -523,6 +701,15 @@ class SitesWindow(QWidget):
         else:
             self.count_label.setText(f"{total} sites")
 
+    def closeEvent(self, event: QCloseEvent):
+        for process in (self.version_process, self.list_process):
+            if process and process.state() != QProcess.NotRunning:
+                process.terminate()
+                if not process.waitForFinished(400):
+                    process.kill()
+                    process.waitForFinished(400)
+        event.accept()
+
 
 class VideoDownloader(QMainWindow):
     PROGRESS_RE = re.compile(
@@ -539,14 +726,43 @@ class VideoDownloader(QMainWindow):
         self.resize(660, 600)
         self.setMinimumSize(620, 560)
 
-        self.download_folder = str(Path.home() / "Downloads")
+        self.runtime_storage_error = ""
+        try:
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            DENO_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            YTDLP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            self.runtime_storage_error = str(error)
+
+        self.settings = QSettings(str(SETTINGS_PATH), QSettings.IniFormat)
+        default_downloads = QStandardPaths.writableLocation(
+            QStandardPaths.DownloadLocation
+        )
+        if not default_downloads:
+            default_downloads = str(Path.home() / "Downloads")
+        saved_downloads = self.settings.value("download_folder", "") or ""
+        self.download_folder = str(Path(saved_downloads or default_downloads))
+
         self.process = None
         self.running = False
+        self.cancel_requested = False
+        self.process_pid = 0
+        self.process_decoder = None
+        self.process_line_buffer = ""
+        self.process_messages = []
         self.last_log_message = ""
         self.sites_window = None
+        self.components_ready = True
+        self.component_issues = []
+
+        self.stop_timer = QTimer(self)
+        self.stop_timer.setSingleShot(True)
+        self.stop_timer.timeout.connect(self.force_stop_download)
 
         self.apply_style()
         self.build_ui()
+        self.restore_preferences()
+        self.preflight_components()
 
     def apply_style(self):
         QApplication.instance().setStyleSheet(
@@ -847,11 +1063,11 @@ class VideoDownloader(QMainWindow):
         self.url_input.setPlaceholderText("Paste a link")
         self.url_input.setClearButtonEnabled(True)
         self.url_input.returnPressed.connect(self.download_or_cancel)
-        paste_button = QPushButton("Paste")
-        paste_button.setFixedWidth(side_button_width)
-        paste_button.clicked.connect(self.paste_url)
+        self.paste_button = QPushButton("Paste")
+        self.paste_button.setFixedWidth(side_button_width)
+        self.paste_button.clicked.connect(self.paste_url)
         url_row.addWidget(self.url_input, 1)
-        url_row.addWidget(paste_button)
+        url_row.addWidget(self.paste_button)
         url_group.addLayout(url_row)
         layout.addLayout(url_group)
 
@@ -874,6 +1090,7 @@ class VideoDownloader(QMainWindow):
         self.quality_dropdown = AnimatedDropdown(
             ["Best", "2160p", "1440p", "1080p", "720p", "480p"]
         )
+        self.quality_dropdown.changed.connect(self.save_preferences)
         quality_column.addWidget(quality_label)
         quality_column.addWidget(self.quality_dropdown)
 
@@ -898,11 +1115,11 @@ class VideoDownloader(QMainWindow):
         self.path_label.setObjectName("pathLabel")
         self.path_label.setTextInteractionFlags(Qt.NoTextInteraction)
         path_layout.addWidget(self.path_label)
-        browse_button = QPushButton("Browse")
-        browse_button.setFixedWidth(side_button_width)
-        browse_button.clicked.connect(self.choose_folder)
+        self.browse_button = QPushButton("Browse")
+        self.browse_button.setFixedWidth(side_button_width)
+        self.browse_button.clicked.connect(self.choose_folder)
         path_row.addWidget(path_frame, 1)
-        path_row.addWidget(browse_button)
+        path_row.addWidget(self.browse_button)
         save_group.addLayout(path_row)
         layout.addLayout(save_group)
 
@@ -942,12 +1159,87 @@ class VideoDownloader(QMainWindow):
         log_group.addLayout(log_header)
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
+        self.log_box.document().setMaximumBlockCount(1500)
         self.log_box.setPlaceholderText("No activity")
         self.log_box.setMinimumHeight(120)
         log_group.addWidget(self.log_box, 1)
         layout.addLayout(log_group, 1)
 
         page.addWidget(panel, 1)
+
+    def restore_preferences(self):
+        format_value = str(self.settings.value("format", "MP4") or "MP4")
+        quality_value = str(self.settings.value("quality", "Best") or "Best")
+
+        if format_value not in self.format_dropdown.items:
+            format_value = "MP4"
+        if quality_value not in self.quality_dropdown.items:
+            quality_value = "Best"
+
+        self.format_dropdown._current = format_value
+        self.format_dropdown.button.setText(format_value)
+        self.quality_dropdown._current = quality_value
+        self.quality_dropdown.button.setText(quality_value)
+        self.format_changed(format_value)
+
+    def save_preferences(self, value=None):
+        self.settings.setValue("download_folder", self.download_folder)
+        self.settings.setValue("format", self.format_dropdown.currentText())
+        self.settings.setValue("quality", self.quality_dropdown.currentText())
+        self.settings.sync()
+
+    @staticmethod
+    def command_works(command):
+        try:
+            result = subprocess.run(
+                [str(part) for part in command],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                env=subprocess_environment(),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
+    def preflight_components(self):
+        issues = []
+
+        if self.runtime_storage_error:
+            issues.append("local runtime folder")
+
+        if not self.command_works(
+            [sys.executable, "-m", "yt_dlp", "--ignore-config", "--version"]
+        ):
+            issues.append("yt-dlp")
+
+        try:
+            metadata.version("yt-dlp-ejs")
+        except metadata.PackageNotFoundError:
+            issues.append("YouTube support")
+
+        for command, label in (
+            ("ffmpeg", "FFmpeg"),
+            ("ffprobe", "FFprobe"),
+            ("deno", "Deno"),
+        ):
+            executable = local_runtime_executable(command)
+            if executable is None or not self.command_works(
+                [executable, "--version" if command == "deno" else "-version"]
+            ):
+                issues.append(label)
+
+        self.component_issues = issues
+        self.components_ready = not issues
+        if self.components_ready:
+            return
+
+        self.download_button.setEnabled(False)
+        self.status_label.setText("Setup incomplete")
+        self.append_log("Run Installer.bat again to repair the setup.")
+        self.append_log("Missing or unavailable: " + ", ".join(issues))
 
     def open_sites(self):
         if self.sites_window is None:
@@ -969,12 +1261,15 @@ class VideoDownloader(QMainWindow):
             self.quality_dropdown.button.setText(
                 self.quality_dropdown.currentText()
             )
+        self.save_preferences()
 
     def paste_url(self):
         text = QApplication.clipboard().text().strip()
         if text:
             self.url_input.setText(text)
-            self.status_label.setText("Ready")
+            self.status_label.setText(
+                "Ready" if self.components_ready else "Setup incomplete"
+            )
 
     def choose_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -985,12 +1280,15 @@ class VideoDownloader(QMainWindow):
         if folder:
             self.download_folder = folder
             self.path_label.setText(folder)
+            self.save_preferences()
 
     def clear_log(self):
         self.log_box.clear()
         self.last_log_message = ""
         if not self.running:
-            self.status_label.setText("Ready")
+            self.status_label.setText(
+                "Ready" if self.components_ready else "Setup incomplete"
+            )
             self.progress_bar.setValue(0)
 
     def append_log(self, message):
@@ -999,7 +1297,12 @@ class VideoDownloader(QMainWindow):
             return
 
         self.last_log_message = message
-        self.log_box.append(message)
+        cursor = self.log_box.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        if not self.log_box.document().isEmpty():
+            cursor.insertBlock()
+        cursor.insertText(message)
+        self.log_box.setTextCursor(cursor)
 
         scrollbar = self.log_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
@@ -1007,8 +1310,29 @@ class VideoDownloader(QMainWindow):
     def download_or_cancel(self):
         if self.running:
             self.cancel_download()
+        elif not self.components_ready:
+            self.status_label.setText("Setup incomplete")
+            self.append_log("Run Installer.bat again to repair the setup.")
         else:
             self.start_download()
+
+    def validate_download_folder(self):
+        folder = Path(self.download_folder).expanduser()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            if not folder.is_dir():
+                raise OSError("The selected path is not a folder.")
+            with tempfile.NamedTemporaryFile(dir=folder):
+                pass
+        except OSError as error:
+            self.status_label.setText("Choose another folder")
+            self.append_log(f"Cannot save to that folder: {error}")
+            return False
+
+        self.download_folder = str(folder.resolve())
+        self.path_label.setText(self.download_folder)
+        self.save_preferences()
+        return True
 
     def start_download(self):
         url = self.url_input.text().strip()
@@ -1017,16 +1341,34 @@ class VideoDownloader(QMainWindow):
             self.append_log("No URL entered.")
             return
 
+        parsed_url = urlparse(url)
+        if parsed_url.scheme.lower() not in {"http", "https"} or not parsed_url.netloc:
+            self.status_label.setText("Invalid link")
+            self.append_log("Enter a complete http:// or https:// link.")
+            return
+
+        if not self.validate_download_folder():
+            return
+
         self.log_box.clear()
         self.last_log_message = ""
         self.progress_bar.setValue(0)
+        self.cancel_requested = False
+        self.process_pid = 0
+        self.process_decoder = codecs.getincrementaldecoder("utf-8")(
+            errors="replace"
+        )
+        self.process_line_buffer = ""
+        self.process_messages = []
 
         args = [
             "-m",
             "yt_dlp",
+            "--ignore-config",
             "--newline",
-            "--no-warnings",
             "--windows-filenames",
+            "--cache-dir",
+            str(YTDLP_CACHE_DIR),
             "--concurrent-fragments",
             "8",
             "--progress-template",
@@ -1034,6 +1376,10 @@ class VideoDownloader(QMainWindow):
             "-P",
             self.download_folder,
         ]
+
+        ffmpeg_executable = local_runtime_executable("ffmpeg")
+        if ffmpeg_executable is not None:
+            args.extend(["--ffmpeg-location", str(ffmpeg_executable.parent)])
 
         if self.format_dropdown.currentText() == "MP3":
             args.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
@@ -1044,10 +1390,13 @@ class VideoDownloader(QMainWindow):
                 height = quality.removesuffix("p")
                 args.extend(["-S", f"res:{height}"])
 
-        args.extend(["--no-playlist", url])
+        args.extend(["--no-playlist", "--", url])
 
         self.process = QProcess(self)
+        self.process.setProcessEnvironment(qprocess_environment())
+        self.process.setWorkingDirectory(str(APP_DIR))
         self.process.setProcessChannelMode(QProcess.MergedChannels)
+        self.process.started.connect(self.process_started)
         self.process.readyReadStandardOutput.connect(self.read_process_output)
         self.process.finished.connect(self.process_finished)
         self.process.errorOccurred.connect(self.process_error)
@@ -1061,55 +1410,119 @@ class VideoDownloader(QMainWindow):
 
     def set_controls_enabled(self, enabled):
         self.url_input.setEnabled(enabled)
+        self.paste_button.setEnabled(enabled)
+        self.browse_button.setEnabled(enabled)
         self.format_dropdown.setEnabled(enabled)
         self.quality_dropdown.setEnabled(
             enabled and self.format_dropdown.currentText() != "MP3"
         )
 
     def read_process_output(self):
-        if not self.process:
+        if not self.process or self.process_decoder is None:
             return
 
-        output = bytes(self.process.readAllStandardOutput()).decode(
-            "utf-8",
-            errors="replace",
-        )
+        data = bytes(self.process.readAllStandardOutput())
+        if data:
+            self.consume_process_text(self.process_decoder.decode(data))
 
-        for raw_line in output.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
+    def flush_process_output(self):
+        if not self.process or self.process_decoder is None:
+            return
 
-            match = self.PROGRESS_RE.search(line)
-            if match:
-                percent_text, speed, eta = match.groups()
+        data = bytes(self.process.readAllStandardOutput())
+        text = self.process_decoder.decode(data, final=True)
+        self.process_decoder = None
+        self.consume_process_text(text, final=True)
 
-                try:
-                    percent = int(float(percent_text.strip()))
-                    self.progress_bar.setValue(max(0, min(percent, 100)))
-                except ValueError:
-                    pass
+    def consume_process_text(self, text, final=False):
+        self.process_line_buffer += text
 
-                status_parts = [
-                    part.strip()
-                    for part in (speed, eta)
-                    if part.strip() != "NA"
-                ]
-                self.status_label.setText(
-                    " • ".join(status_parts) or "Downloading…"
-                )
-                continue
+        while "\n" in self.process_line_buffer:
+            raw_line, self.process_line_buffer = self.process_line_buffer.split(
+                "\n", 1
+            )
+            self.handle_process_line(raw_line.rstrip("\r"))
 
-            clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
-            self.append_log(clean_line)
+        if final and self.process_line_buffer:
+            self.handle_process_line(self.process_line_buffer.rstrip("\r"))
+            self.process_line_buffer = ""
+
+    def handle_process_line(self, raw_line):
+        line = raw_line.strip()
+        if not line:
+            return
+
+        match = self.PROGRESS_RE.search(line)
+        if match:
+            percent_text, speed, eta = match.groups()
+
+            try:
+                percent = int(float(percent_text.strip()))
+                self.progress_bar.setValue(max(0, min(percent, 100)))
+            except ValueError:
+                pass
+
+            status_parts = [
+                part.strip()
+                for part in (speed, eta)
+                if part.strip() and part.strip() != "NA"
+            ]
+            self.status_label.setText(" • ".join(status_parts) or "Downloading…")
+            return
+
+        clean_line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+        self.process_messages.append(clean_line)
+        if len(self.process_messages) > 200:
+            del self.process_messages[:-200]
+        self.append_log(clean_line)
+
+    def process_started(self):
+        if self.process:
+            self.process_pid = int(self.process.processId())
+            if self.cancel_requested:
+                self.process.terminate()
 
     def cancel_download(self):
         if self.process and self.process.state() != QProcess.NotRunning:
+            self.cancel_requested = True
             self.status_label.setText("Stopping…")
-            self.process.kill()
+            self.process_pid = int(self.process.processId()) or self.process_pid
+            self.process.terminate()
+            self.stop_timer.start(1200)
+
+    @staticmethod
+    def kill_process_tree(process_id):
+        if os.name != "nt" or not process_id:
+            return
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process_id), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def force_stop_download(self):
+        process = self.process
+        if not process:
+            return
+        process_id = int(process.processId()) or self.process_pid
+        self.kill_process_tree(process_id)
+        if process.state() != QProcess.NotRunning:
+            process.kill()
 
     def process_finished(self, exit_code, exit_status):
-        was_cancelled = self.status_label.text() == "Stopping…"
+        self.flush_process_output()
+        was_cancelled = self.cancel_requested
+        process_id = self.process_pid
+        self.stop_timer.stop()
+
+        if was_cancelled:
+            self.kill_process_tree(process_id)
 
         self.running = False
         self.download_button.setText("Download")
@@ -1122,29 +1535,66 @@ class VideoDownloader(QMainWindow):
             self.status_label.setText("Done")
         else:
             self.status_label.setText("Failed")
+            self.append_failure_summary(exit_code)
 
         self.process = None
+        self.process_pid = 0
+        self.cancel_requested = False
+        self.process_decoder = None
+
+    def append_failure_summary(self, exit_code):
+        output = "\n".join(self.process_messages).lower()
+        if "unsupported url" in output:
+            message = "That website or link is not supported."
+        elif "requested format is not available" in output:
+            message = "That quality is unavailable. Try Best or another quality."
+        elif "ffmpeg" in output or "ffprobe" in output:
+            message = "FFmpeg could not be used. Run Installer.bat again."
+        elif "javascript runtime" in output or "yt-dlp-ejs" in output:
+            message = "YouTube support is incomplete. Run Installer.bat again."
+        elif "http error 403" in output or "http error 429" in output:
+            message = "The website blocked the request. Wait a while and try again."
+        elif "sign in" in output or "private video" in output:
+            message = "That video may be private or require an account."
+        else:
+            message = "The download failed. Check the messages above for details."
+        self.append_log(f"{message} (code {exit_code})")
 
     def process_error(self, error):
+        error_text = self.process.errorString() if self.process else str(error)
         if error == QProcess.FailedToStart:
-            self.append_log("Could not start the downloader.")
+            self.append_log(f"Could not start the downloader: {error_text}")
             self.running = False
+            self.stop_timer.stop()
             self.download_button.setText("Download")
             self.set_controls_enabled(True)
             self.status_label.setText("Failed")
             self.process = None
+            self.process_pid = 0
+            self.cancel_requested = False
+            self.process_decoder = None
             return
 
-        if self.running and error != QProcess.Crashed:
-            self.append_log(f"Process error: {error}")
+        if error == QProcess.Crashed and self.cancel_requested:
+            return
+        if self.running:
+            self.append_log(f"Downloader process error: {error_text}")
 
     def closeEvent(self, event: QCloseEvent):
+        self.save_preferences()
         if self.sites_window is not None:
             self.sites_window.close()
 
         if self.process and self.process.state() != QProcess.NotRunning:
-            self.process.kill()
-            self.process.waitForFinished(1000)
+            process = self.process
+            process_id = int(process.processId()) or self.process_pid
+            self.cancel_requested = True
+            process.terminate()
+            process.waitForFinished(750)
+            self.kill_process_tree(process_id)
+            if process.state() != QProcess.NotRunning:
+                process.kill()
+                process.waitForFinished(750)
 
         event.accept()
 
@@ -1152,6 +1602,7 @@ class VideoDownloader(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    sys.excepthook = handle_unhandled_exception
 
     window = VideoDownloader()
     window.show()

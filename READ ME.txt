@@ -1,1 +1,44 @@
-The installer sometimes gets stuck, if relaunching it doesnt work then try running as admin.
+FLEECE VIDEO DOWNLOADER
+
+INSTALL
+
+1. Extract the whole folder from the ZIP. Do not run it from inside the ZIP.
+2. Double-click Installer.bat and leave the window open until every check passes.
+
+You do not need to run the installer as administrator.
+
+USE
+
+Double-click Video Downloader.pyw, paste a video link, choose MP4 or MP3, and click Download.
+
+UPDATES
+
+Run Installer.bat again to update yt-dlp or repair the app. It keeps your saved folder, format, and quality settings.
+
+WHAT THE INSTALLER ADDS
+
+- If compatible Python 3.10 through 3.14 is already installed, it is used only to create a private .venv inside this folder. Its packages are not changed.
+- If compatible Python is not installed, the installer offers to place the official Python 3.14 embedded runtime inside .runtime instead. It is not registered with Windows.
+- PySide6 and yt-dlp[default], including yt-dlp-ejs, come from the official Python Package Index at pypi.org.
+- FFmpeg and FFprobe use Gyan's Windows essentials build from the GyanD/codexffmpeg GitHub releases. Gyan is the Windows build provider linked by the official FFmpeg download page.
+- Deno comes from the official denoland/deno GitHub releases.
+
+The Python, FFmpeg, and Deno archives are checked against pinned SHA-256 checksums. The official pip bootstrap file comes from bootstrap.pypa.io over HTTPS, and its received checksum is recorded in setup.log. The installer does not change PATH, Python file associations, or globally installed Python packages. App settings, caches, runtimes, and dependencies stay in this folder.
+
+PRIVACY
+
+The app contains no telemetry, analytics, accounts, or usage tracking. It connects to the link you choose only to complete the download. Installer.bat connects to the official setup sources described above to install or update components.
+
+TROUBLESHOOTING
+
+If setup fails, check your internet connection and run Installer.bat again. Details are saved in setup.log in this folder. The log can include local folder paths, so review it before sharing it.
+
+If Video Downloader.pyw does not open, rerun Installer.bat and make sure every final check passes. Keep the whole folder together; moving only the .pyw file will break the app.
+
+REMOVE
+
+Close the app and delete this folder. That removes everything installed specifically for the downloader. Any Python installation that was already on the computer is left untouched.
+
+SOURCE AND RESPONSIBLE USE
+
+When the project is published, the source-code button beside the download on fleece.lol will open the public repository so anyone can inspect the files. Only download media that you own or have permission to save, and follow the rules of the site providing it.

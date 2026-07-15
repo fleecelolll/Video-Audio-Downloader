@@ -2,7 +2,7 @@
 
 # video + audio downloader
 
-a simple windows app for downloading video or audio from supported sites.
+a simple app for downloading video or audio on 64-bit Windows (x64 or ARM64).
 
 </div>
 
@@ -25,7 +25,11 @@ a simple windows app for downloading video or audio from supported sites.
 3. run `Installer.bat`
 4. open `Video Downloader.pyw`
 
-The installer gets the required components from their official package sources.
+The installer gets the required components from their official sources and keeps the app-specific packages, settings, caches, and downloaded runtimes inside the app folder. It does not require administrator access or change your system PATH, file associations, or globally installed Python packages.
+
+If compatible Python is already installed, the app uses a private `.venv` for its packages. That environment still relies on the existing Python installation for Python itself. If compatible Python is not installed, setup offers to download a fully private embedded Python runtime into the app folder.
+
+Run `Installer.bat` again whenever you want to update yt-dlp or repair the app's local files. Your selected save folder, format, and quality are kept.
 
 ## usage
 
@@ -37,8 +41,15 @@ The installer gets the required components from their official package sources.
 ## built with
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+- [yt-dlp-ejs](https://github.com/yt-dlp/ejs)
 - [PySide6](https://doc.qt.io/qtforpython-6/)
 - [FFmpeg](https://ffmpeg.org/)
+- [Deno](https://deno.com/)
+- [Python](https://www.python.org/)
+
+## privacy and removal
+
+The app has no telemetry, analytics, accounts, or usage tracking. To remove everything installed specifically for the downloader, close it and delete its folder.
 
 ## note
 

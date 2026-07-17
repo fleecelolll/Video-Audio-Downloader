@@ -51,8 +51,6 @@ Run `Installer.bat` again whenever you want to update yt-dlp or repair the app's
 
 The app has no telemetry, analytics, accounts, or usage tracking. To remove everything installed specifically for the downloader, close it and delete its folder.
 
-## note
-
-This project was made with AI.
+## responsible use
 
 Only download media you own or have permission to download.

@@ -41,4 +41,6 @@ Close the app and delete this folder. That removes everything installed specific
 
 SOURCE AND RESPONSIBLE USE
 
-This project is published in a public GitHub repository so anyone can inspect the files. The source-code button on fleece.lol can link directly to it. Only download media that you own or have permission to save, and follow the rules of the site providing it.
+Source: https://github.com/fleecelolll/Video-Audio-Downloader
+
+Only download media that you own or have permission to save, and follow the rules of the site providing it.

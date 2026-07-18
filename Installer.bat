@@ -65,6 +65,17 @@ set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.3/deno-aar
 set "DENO_SHA256=BC668F199E4892F4447661F253178AF007A4D715B0FF67493573B0E0216389AE"
 
 :ArchitectureReady
+if not exist "%RUNTIME%" mkdir "%RUNTIME%" >>"%LOG%" 2>&1
+if not exist "%RUNTIME%" (
+    set "FAIL_MESSAGE=Could not create the private runtime folder."
+    goto Failed
+)
+if not exist "%DOWNLOADS%" mkdir "%DOWNLOADS%" >>"%LOG%" 2>&1
+if not exist "%DOWNLOADS%" (
+    set "FAIL_MESSAGE=Could not create the private download folder."
+    goto Failed
+)
+
 >>"%LOG%" echo.
 >>"%LOG%" echo ============================================================
 >>"%LOG%" echo Setup started: %DATE% %TIME%
@@ -78,13 +89,13 @@ echo  ==================================================
 echo                VIDEO DOWNLOADER SETUP
 echo  ==================================================
 echo.
-echo   This keeps the app and its dependencies inside
-echo   this folder. It does not need administrator access.
+echo   App-specific components stay inside this folder.
+echo   It does not need administrator access.
 echo.
 echo      Python environment     runs the app
 echo      PySide6                the app window
 echo      yt-dlp and EJS         downloads videos
-echo      ffmpeg and ffprobe     audio and HD video
+echo      FFmpeg and FFprobe     audio and HD video
 echo      Deno                   current YouTube support
 echo.
 echo   Keep this window open until every check passes.
@@ -94,17 +105,6 @@ echo  ==================================================
 
 if not exist "%APP_FILE%" (
     set "FAIL_MESSAGE=Video Downloader.pyw is missing from this folder."
-    goto Failed
-)
-
-if not exist "%RUNTIME%" mkdir "%RUNTIME%" >>"%LOG%" 2>&1
-if not exist "%RUNTIME%" (
-    set "FAIL_MESSAGE=Could not create the local runtime folder."
-    goto Failed
-)
-if not exist "%DOWNLOADS%" mkdir "%DOWNLOADS%" >>"%LOG%" 2>&1
-if not exist "%DOWNLOADS%" (
-    set "FAIL_MESSAGE=Could not create the local download folder."
     goto Failed
 )
 
@@ -204,7 +204,7 @@ if errorlevel 1 (
 echo      Done.
 
 echo.
-echo   [ STEP 3 / 5 ]   ffmpeg and ffprobe
+echo   [ STEP 3 / 5 ]   FFmpeg and FFprobe
 echo.
 call :ValidateFfmpeg
 if not errorlevel 1 (
@@ -215,7 +215,7 @@ if not errorlevel 1 (
 echo      Downloading the verified local media tools...
 call :InstallFfmpeg
 if errorlevel 1 (
-    set "FAIL_MESSAGE=ffmpeg or ffprobe could not be installed and verified."
+    set "FAIL_MESSAGE=FFmpeg or FFprobe could not be installed and verified."
     goto Failed
 )
 :FfmpegReady
@@ -270,7 +270,7 @@ call :PauseIfNeeded
 exit /b 0
 
 :Cancelled
-call :Log "Setup cancelled by the user before private Python installation."
+call :Log "Setup cancelled by the user before Python installation."
 echo.
 echo  ==================================================
 echo                     SETUP CANCELLED

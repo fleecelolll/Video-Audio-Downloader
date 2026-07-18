@@ -2,7 +2,7 @@
 
 # video + audio downloader
 
-a simple app for downloading video or audio on 64-bit Windows (x64 or ARM64).
+A little tool I made with AI to download Videos and/or Audios from yt-dlp's supported sites on 64-bit Windows (x64 or ARM64).
 
 </div>
 
@@ -25,7 +25,7 @@ a simple app for downloading video or audio on 64-bit Windows (x64 or ARM64).
 3. run `Installer.bat`
 4. open `Video Downloader.pyw`
 
-The installer gets the required components from their official sources and keeps the app-specific packages, settings, caches, and downloaded runtimes inside the app folder. It does not require administrator access or change your system PATH, file associations, or globally installed Python packages.
+The download contains only the installer and app. Setup gets the required components from their official sources and keeps the app-specific packages, settings, caches, and downloaded runtimes inside the app folder. It does not require administrator access or change your system PATH, file associations, or globally installed Python packages.
 
 If compatible Python is already installed, the app uses a private `.venv` for its packages. That environment still relies on the existing Python installation for Python itself. If compatible Python is not installed, setup offers to download a fully private embedded Python runtime into the app folder.
 
@@ -51,6 +51,8 @@ Run `Installer.bat` again whenever you want to update yt-dlp or repair the app's
 
 The app has no telemetry, analytics, accounts, or usage tracking. To remove everything installed specifically for the downloader, close it and delete its folder.
 
-## responsible use
+## note
+
+This project was made with AI.
 
 Only download media you own or have permission to download.

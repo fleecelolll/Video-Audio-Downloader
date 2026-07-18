@@ -43,4 +43,6 @@ SOURCE AND RESPONSIBLE USE
 
 Source: https://github.com/fleecelolll/Video-Audio-Downloader
 
+This project was made with AI.
+
 Only download media that you own or have permission to save, and follow the rules of the site providing it.

@@ -14,7 +14,9 @@ from urllib.parse import urlparse
 APP_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = APP_DIR / ".runtime"
 VENV_PYTHONW = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
+VENV_PYTHON = APP_DIR / ".venv" / "Scripts" / "python.exe"
 EMBEDDED_PYTHONW = RUNTIME_DIR / "python" / "pythonw.exe"
+EMBEDDED_PYTHON = RUNTIME_DIR / "python" / "python.exe"
 DENO_DATA_DIR = RUNTIME_DIR / "deno-data"
 YTDLP_CACHE_DIR = RUNTIME_DIR / "yt-dlp-cache"
 SETTINGS_PATH = RUNTIME_DIR / "settings.ini"
@@ -29,40 +31,52 @@ def show_native_setup_error(message):
 
 
 def bootstrap_local_python():
-    local_pythonw = next(
-        (
-            candidate
-            for candidate in (VENV_PYTHONW, EMBEDDED_PYTHONW)
-            if candidate.is_file()
-        ),
-        None,
-    )
-    if local_pythonw is None:
-        show_native_setup_error(
-            "Setup is missing or incomplete.\n\n"
-            "Run Installer.bat, let it finish, then open this file again."
-        )
-        raise SystemExit(1)
-
     current = os.path.normcase(os.path.realpath(sys.executable))
-    expected = os.path.normcase(os.path.realpath(local_pythonw))
-    if current == expected:
-        return
+    for local_python, local_pythonw in (
+        (VENV_PYTHON, VENV_PYTHONW),
+        (EMBEDDED_PYTHON, EMBEDDED_PYTHONW),
+    ):
+        if not local_pythonw.is_file():
+            continue
 
-    try:
-        subprocess.Popen(
-            [str(local_pythonw), str(Path(__file__).resolve()), *sys.argv[1:]],
-            cwd=str(APP_DIR),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except OSError:
-        show_native_setup_error(
-            "The app's Python could not start.\n\n"
-            "Run Installer.bat again to repair the setup."
-        )
-        raise SystemExit(1)
+        expected = os.path.normcase(os.path.realpath(local_pythonw))
+        if current == expected:
+            return
 
-    raise SystemExit(0)
+        if not local_python.is_file():
+            continue
+
+        try:
+            validation = subprocess.run(
+                [str(local_python), "-I", "-c", "pass"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+        if validation.returncode != 0:
+            continue
+
+        try:
+            subprocess.Popen(
+                [str(local_pythonw), str(Path(__file__).resolve()), *sys.argv[1:]],
+                cwd=str(APP_DIR),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            continue
+
+        raise SystemExit(0)
+
+    show_native_setup_error(
+        "Setup is missing, incomplete, or no longer usable.\n\n"
+        "Run Installer.bat, let it finish, then open this file again."
+    )
+    raise SystemExit(1)
 
 
 if __name__ == "__main__":

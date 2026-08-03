@@ -2,7 +2,7 @@
 
 # video + audio downloader
 
-A little tool I made with AI to download Videos and/or Audios from yt-dlp's supported sites on 64-bit Windows (x64 or ARM64).
+A little tool I made with AI to download Videos and/or Audios from yt-dlp's supported sites locally on 64-bit Windows.
 
 </div>
 

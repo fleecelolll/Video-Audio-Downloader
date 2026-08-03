@@ -1,5 +1,7 @@
 FLEECE VIDEO DOWNLOADER
 
+Video Downloader runs locally on 64-bit Windows.
+
 INSTALL
 
 1. Extract the whole folder from the ZIP. Do not run it from inside the ZIP.

@@ -6,26 +6,47 @@ INSTALL
 
 1. Extract the whole folder from the ZIP. Do not run it from inside the ZIP.
 2. Double-click Installer.bat and leave the window open until every check passes.
+3. Double-click the "Video Downloader" shortcut created in this folder.
 
-You do not need to run the installer as administrator.
+You can copy that shortcut to your Desktop or pin it to the taskbar. The shortcut launches the app with its own private Python environment.
+
+You do not need to run the installer as administrator. Run Installer.bat again after moving the folder so the shortcut can be refreshed for the new location.
 
 USE
 
-Double-click Video Downloader.pyw, paste a video link, choose MP4 or MP3, and click Download.
+Double-click the "Video Downloader" shortcut, paste a video link, choose MP4 or MP3, and click Download.
 
 UPDATES
 
-Run Installer.bat again to update yt-dlp or repair the app. It keeps your saved folder, format, and quality settings.
+Run Installer.bat again to repair the pinned downloader components. After downloading a newer release, run its installer to update those components. Setup keeps your saved folder, format, and quality settings and recreates the shortcut for the folder's current location.
 
 WHAT THE INSTALLER ADDS
 
-- If compatible Python 3.10 through 3.14 is already installed, the app keeps its packages in a private .venv inside this folder. That environment still relies on the existing Python installation for Python itself, but its globally installed packages are not changed.
-- If compatible Python is not installed, the installer offers to place the official Python 3.14 embedded runtime inside .runtime instead. It is not registered with Windows.
-- PySide6 and yt-dlp[default], including yt-dlp-ejs, come from the official Python Package Index at pypi.org.
-- FFmpeg and FFprobe use Gyan's Windows essentials build from the GyanD/codexffmpeg GitHub releases. Gyan is the Windows build provider linked by the official FFmpeg download page.
-- Deno comes from the official denoland/deno GitHub releases.
+- Uses a compatible 64-bit Python 3.10 through 3.14 already on the PC when possible.
 
-The Python, FFmpeg, and Deno archives are checked against pinned SHA-256 checksums. The official pip bootstrap file comes from bootstrap.pypa.io over HTTPS, and its received checksum is recorded in setup.log. The installer does not change PATH, Python file associations, or globally installed Python packages. App settings, caches, downloaded runtimes, and app-specific packages stay in this folder.
+- Otherwise offers to download official Python 3.14.7 privately into this folder.
+
+- Installs pinned PySide6 Essentials 6.11.1, yt-dlp 2026.7.4, and yt-dlp-ejs 0.8.0 from official PyPI.
+
+- Installs the verified FFmpeg 9.0 essentials build and Deno 2.9.5 privately in this folder.
+
+- Verifies downloaded private-runtime files with pinned SHA-256 checksums.
+
+- Compiles the app source and runs non-downloading self-tests.
+
+- Creates and validates a normal double-clickable "Video Downloader" shortcut.
+
+- Installs one shared per-user Fleece Tools launcher here:
+
+  %LOCALAPPDATA%\Fleece Tools\Python Launcher
+
+- Sets .pyw files to use that shared launcher for your Windows account.
+
+The launcher first looks for .venv\Scripts\pythonw.exe beside the selected .pyw file, then .runtime\python\pythonw.exe beside it. It never uses another tool's private Python.
+
+Before the first Fleece Tools association change, setup exports existing per-user .pyw settings into the shared launcher folder. If setup cannot safely save an existing non-Fleece setting, it stops without overwriting it. If you choose a different .pyw app later, future setup runs leave that newer choice alone.
+
+Setup does not need administrator access, change PATH, install global Python packages, or install a background service. App settings, caches, downloaded runtimes, and app-specific packages stay in this folder.
 
 PRIVACY
 
@@ -35,11 +56,17 @@ TROUBLESHOOTING
 
 If setup fails, check your internet connection and run Installer.bat again. Details are saved in setup.log in this folder. The log can include local folder paths, so review it before sharing it.
 
-If Video Downloader.pyw does not open, rerun Installer.bat and make sure every final check passes. Keep the whole folder together; moving only the .pyw file will break the app.
+If the Video Downloader shortcut does not open, rerun Installer.bat and make sure every final check passes. Setup recreates the shortcut for the folder's current location. Keep the whole folder together; moving only individual files will break the app.
 
 REMOVE
 
-Close the app and delete this folder. That removes everything installed specifically for the downloader. Any Python installation that was already on the computer is left untouched.
+To remove only Video Downloader, close the app and delete this folder. Any Python installation that was already on the computer is left untouched. The app does not add itself to startup, install a Windows service, or create an uninstaller entry.
+
+The shared .pyw launcher can be used by every Fleece Tool, so deleting one tool does not remove it. To restore the .pyw settings that existed before Fleece Tools first changed them, run:
+
+  %LOCALAPPDATA%\Fleece Tools\Python Launcher\Restore pyw association.cmd
+
+The restore helper stops without overwriting a newer non-Fleece choice. After restoring, and after removing every Fleece Tool that uses the launcher, you can delete the shared Python Launcher folder. Its registry backup files can include local program names and paths, so review them before sharing.
 
 SOURCE AND RESPONSIBLE USE
 

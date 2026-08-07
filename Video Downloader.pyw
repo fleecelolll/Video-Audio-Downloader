@@ -1,3 +1,4 @@
+import atexit
 import codecs
 import ctypes
 import os
@@ -6,13 +7,16 @@ import subprocess
 import sys
 import tempfile
 import traceback
+from ctypes import wintypes
 from importlib import metadata
 from pathlib import Path
 from urllib.parse import urlparse
 
 
 APP_DIR = Path(__file__).resolve().parent
+APP_VERSION = "1.0.3"
 RUNTIME_DIR = APP_DIR / ".runtime"
+SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 VENV_PYTHONW = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
 VENV_PYTHON = APP_DIR / ".venv" / "Scripts" / "python.exe"
 EMBEDDED_PYTHONW = RUNTIME_DIR / "python" / "pythonw.exe"
@@ -20,6 +24,26 @@ EMBEDDED_PYTHON = RUNTIME_DIR / "python" / "python.exe"
 DENO_DATA_DIR = RUNTIME_DIR / "deno-data"
 YTDLP_CACHE_DIR = RUNTIME_DIR / "yt-dlp-cache"
 SETTINGS_PATH = RUNTIME_DIR / "settings.ini"
+APP_MUTEX_NAMES = (
+    r"Global\FleeceVideoDownloaderApp",
+    r"Local\FleeceVideoDownloaderApp",
+)
+APP_MUTEX_HANDLE = None
+ERROR_ALREADY_EXISTS = 183
+ERROR_ACCESS_DENIED = 5
+
+if os.name == "nt":
+    NATIVE_KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    NATIVE_KERNEL32.CreateMutexW.argtypes = (
+        ctypes.c_void_p,
+        wintypes.BOOL,
+        wintypes.LPCWSTR,
+    )
+    NATIVE_KERNEL32.CreateMutexW.restype = wintypes.HANDLE
+    NATIVE_KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    NATIVE_KERNEL32.CloseHandle.restype = wintypes.BOOL
+else:
+    NATIVE_KERNEL32 = None
 
 
 def show_native_setup_error(message):
@@ -30,21 +54,63 @@ def show_native_setup_error(message):
         print(f"{title}: {message}", file=sys.stderr)
 
 
+def release_app_mutex():
+    global APP_MUTEX_HANDLE
+    if APP_MUTEX_HANDLE is None or NATIVE_KERNEL32 is None:
+        return
+    NATIVE_KERNEL32.CloseHandle(APP_MUTEX_HANDLE)
+    APP_MUTEX_HANDLE = None
+
+
+def _try_create_named_mutex(name):
+    if NATIVE_KERNEL32 is None:
+        return "unavailable", None
+    ctypes.set_last_error(0)
+    handle = NATIVE_KERNEL32.CreateMutexW(None, False, name)
+    error_code = ctypes.get_last_error()
+    if handle and error_code == ERROR_ALREADY_EXISTS:
+        NATIVE_KERNEL32.CloseHandle(handle)
+        return "exists", None
+    if handle:
+        return "acquired", handle
+    if error_code == ERROR_ACCESS_DENIED:
+        return "denied", None
+    return "failed", None
+
+
+def acquire_app_mutex():
+    global APP_MUTEX_HANDLE
+    if NATIVE_KERNEL32 is None:
+        return True
+    for index, name in enumerate(APP_MUTEX_NAMES):
+        status, handle = _try_create_named_mutex(name)
+        if status == "acquired":
+            APP_MUTEX_HANDLE = handle
+            atexit.register(release_app_mutex)
+            return True
+        if status == "exists":
+            return False
+        if index == 0 and status == "denied":
+            continue
+        return False
+    return False
+
+
 def bootstrap_local_python():
     current = os.path.normcase(os.path.realpath(sys.executable))
     for local_python, local_pythonw in (
         (VENV_PYTHON, VENV_PYTHONW),
         (EMBEDDED_PYTHON, EMBEDDED_PYTHONW),
     ):
-        if not local_pythonw.is_file():
+        if not local_python.is_file() or not local_pythonw.is_file():
             continue
 
-        expected = os.path.normcase(os.path.realpath(local_pythonw))
-        if current == expected:
+        valid_executables = {
+            os.path.normcase(os.path.realpath(local_python)),
+            os.path.normcase(os.path.realpath(local_pythonw)),
+        }
+        if current in valid_executables:
             return
-
-        if not local_python.is_file():
-            continue
 
         try:
             validation = subprocess.run(
@@ -74,12 +140,15 @@ def bootstrap_local_python():
 
     show_native_setup_error(
         "Setup is missing, incomplete, or no longer usable.\n\n"
-        "Run Installer.bat, let it finish, then open this file again."
+        "Run Installer.bat, let it finish, then open the Video Downloader "
+        "shortcut again."
     )
     raise SystemExit(1)
 
 
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     bootstrap_local_python()
 
 
@@ -88,7 +157,6 @@ try:
         QEasingCurve,
         QEvent,
         QPoint,
-        QParallelAnimationGroup,
         QProcess,
         QProcessEnvironment,
         QPropertyAnimation,
@@ -110,7 +178,6 @@ try:
         QApplication,
         QFileDialog,
         QFrame,
-        QGraphicsOpacityEffect,
         QHBoxLayout,
         QLabel,
         QLineEdit,
@@ -339,6 +406,7 @@ class AnimatedDropdown(QWidget):
         self.items = list(items)
         self._current = self.items[0]
         self._animation = None
+        self._closing = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -377,9 +445,6 @@ class AnimatedDropdown(QWidget):
 
         outer.addWidget(surface)
 
-        self.opacity_effect = QGraphicsOpacityEffect(self.popup)
-        self.popup.setGraphicsEffect(self.opacity_effect)
-
     def currentText(self):
         return self._current
 
@@ -390,12 +455,14 @@ class AnimatedDropdown(QWidget):
         self.hide_popup()
 
     def toggle_popup(self):
-        if self.popup.isVisible():
+        if self.popup.isVisible() and not self._closing:
             self.hide_popup()
         else:
             self.show_popup()
 
     def show_popup(self):
+        self._stop_popup_animation()
+        self._closing = False
         popup_height = len(self.items) * 34 + 12
         popup_width = self.width()
 
@@ -407,10 +474,8 @@ class AnimatedDropdown(QWidget):
 
         if available and below_y + popup_height > available.bottom():
             final_y = button_top_left.y() - popup_height - 4
-            start_y = final_y + 8
         else:
             final_y = below_y
-            start_y = final_y - 8
 
         end_rect = QRect(
             button_top_left.x(),
@@ -418,78 +483,65 @@ class AnimatedDropdown(QWidget):
             popup_width,
             popup_height,
         )
-        start_rect = QRect(
-            button_top_left.x(),
-            start_y,
-            popup_width,
-            popup_height,
-        )
-
         QApplication.instance().installEventFilter(self)
 
-        self.popup.setGeometry(start_rect)
-        self.opacity_effect.setOpacity(0.0)
+        self.popup.setGeometry(end_rect)
+        self.popup.setWindowOpacity(0.0)
         self.popup.show()
         self.popup.raise_()
 
-        geometry_animation = QPropertyAnimation(self.popup, b"geometry")
-        geometry_animation.setDuration(150)
-        geometry_animation.setStartValue(start_rect)
-        geometry_animation.setEndValue(end_rect)
-        geometry_animation.setEasingCurve(QEasingCurve.OutCubic)
-
         opacity_animation = QPropertyAnimation(
-            self.opacity_effect,
-            b"opacity",
+            self.popup, b"windowOpacity", self
         )
-        opacity_animation.setDuration(150)
+        opacity_animation.setDuration(110)
         opacity_animation.setStartValue(0.0)
         opacity_animation.setEndValue(1.0)
         opacity_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-        group = QParallelAnimationGroup(self)
-        group.addAnimation(geometry_animation)
-        group.addAnimation(opacity_animation)
-
-        self._animation = group
-        group.start()
+        self._animation = opacity_animation
+        opacity_animation.finished.connect(
+            lambda current=opacity_animation: self._popup_animation_finished(
+                current, False
+            )
+        )
+        opacity_animation.start()
 
     def hide_popup(self):
         if not self.popup.isVisible():
             return
-
+        self._stop_popup_animation()
+        self._closing = True
         QApplication.instance().removeEventFilter(self)
-
-        current_rect = self.popup.geometry()
-        end_rect = QRect(
-            current_rect.x(),
-            current_rect.y() - 5,
-            current_rect.width(),
-            current_rect.height(),
-        )
-
-        geometry_animation = QPropertyAnimation(self.popup, b"geometry")
-        geometry_animation.setDuration(100)
-        geometry_animation.setStartValue(current_rect)
-        geometry_animation.setEndValue(end_rect)
-        geometry_animation.setEasingCurve(QEasingCurve.InCubic)
-
         opacity_animation = QPropertyAnimation(
-            self.opacity_effect,
-            b"opacity",
+            self.popup, b"windowOpacity", self
         )
-        opacity_animation.setDuration(100)
-        opacity_animation.setStartValue(self.opacity_effect.opacity())
+        opacity_animation.setDuration(75)
+        opacity_animation.setStartValue(self.popup.windowOpacity())
         opacity_animation.setEndValue(0.0)
         opacity_animation.setEasingCurve(QEasingCurve.InCubic)
+        self._animation = opacity_animation
+        opacity_animation.finished.connect(
+            lambda current=opacity_animation: self._popup_animation_finished(
+                current, True
+            )
+        )
+        opacity_animation.start()
 
-        group = QParallelAnimationGroup(self)
-        group.addAnimation(geometry_animation)
-        group.addAnimation(opacity_animation)
-        group.finished.connect(self.popup.hide)
+    def _stop_popup_animation(self):
+        if self._animation is None:
+            return
+        animation = self._animation
+        self._animation = None
+        animation.stop()
+        animation.deleteLater()
 
-        self._animation = group
-        group.start()
+    def _popup_animation_finished(self, animation, hide_after):
+        if self._animation is animation:
+            self._animation = None
+        if hide_after:
+            self.popup.hide()
+            self.popup.setWindowOpacity(1.0)
+            self._closing = False
+        animation.deleteLater()
 
     def eventFilter(self, watched, event):
         if self.popup.isVisible() and event.type() == QEvent.MouseButtonPress:
@@ -1613,12 +1665,112 @@ class VideoDownloader(QMainWindow):
         event.accept()
 
 
-if __name__ == "__main__":
+def run_self_test(output_dir):
+    assert APP_VERSION == "1.0.3"
+    output_dir = Path(output_dir).resolve()
+    checks = []
+
+    assert APP_DIR == Path(__file__).resolve().parent
+    checks.append("application paths resolve beside the script")
+
+    expected_interpreters = {
+        os.path.normcase(os.path.realpath(path))
+        for path in (VENV_PYTHON, VENV_PYTHONW, EMBEDDED_PYTHON, EMBEDDED_PYTHONW)
+        if path.is_file()
+    }
+    assert os.path.normcase(os.path.realpath(sys.executable)) in expected_interpreters
+    checks.append("the app is using its own private Python")
+
+    runtime_path = runtime_path_value("")
+    assert str(RUNTIME_DIR / "ffmpeg") in runtime_path
+    assert str(RUNTIME_DIR / "deno") in runtime_path
+    checks.append("the child-process path includes both private media runtimes")
+
+    for command in ("ffmpeg", "ffprobe", "deno"):
+        executable = local_runtime_executable(command)
+        assert executable is not None
+        argument = "--version" if command == "deno" else "-version"
+        assert VideoDownloader.command_works([executable, argument])
+    checks.append("FFmpeg, FFprobe, and Deno start without network access")
+
+    assert metadata.version("PySide6-Essentials") == "6.11.1"
+    assert metadata.version("yt-dlp") == "2026.7.4"
+    assert metadata.version("yt-dlp-ejs") == "0.8.0"
+    checks.append("the pinned Python components match this release")
+
+    assert VideoDownloader.command_works(
+        [sys.executable, "-m", "yt_dlp", "--ignore-config", "--version"]
+    )
+    checks.append("yt-dlp starts with user configuration disabled")
+
+    if NATIVE_KERNEL32 is not None:
+        test_name = rf"Local\FleeceVideoDownloaderSelfTest-{os.getpid()}"
+        first_status, first_handle = _try_create_named_mutex(test_name)
+        second_handle = None
+        try:
+            assert first_status == "acquired" and first_handle
+            second_status, second_handle = _try_create_named_mutex(test_name)
+            assert second_status == "exists" and second_handle is None
+        finally:
+            if second_handle:
+                NATIVE_KERNEL32.CloseHandle(second_handle)
+            if first_handle:
+                NATIVE_KERNEL32.CloseHandle(first_handle)
+    checks.append("a second app-instance mutex is rejected")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    marker = output_dir / "self-test-passed.txt"
+    marker.write_text("\n".join(checks) + "\n", encoding="utf-8")
+    print(f"Video Downloader self-test passed ({len(checks)} checks).")
+    return 0
+
+
+def main():
+    diagnostic_mode = "--self-test" in sys.argv
+    if not diagnostic_mode:
+        if not acquire_app_mutex():
+            show_native_setup_error("Video Downloader is already open.")
+            return 1
+        if SETUP_LOCK_DIR.is_dir():
+            release_app_mutex()
+            show_native_setup_error(
+                "Video Downloader setup is currently running.\n\n"
+                "Let Installer.bat finish, then open the shortcut again."
+            )
+            return 1
+
+    if diagnostic_mode:
+        index = sys.argv.index("--self-test")
+        output = (
+            sys.argv[index + 1]
+            if index + 1 < len(sys.argv)
+            else RUNTIME_DIR / "self-test"
+        )
+        try:
+            return run_self_test(output)
+        except Exception:
+            traceback.print_exc()
+            return 1
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "fleece.video-downloader"
+        )
+    except (AttributeError, OSError):
+        pass
+
     app = QApplication(sys.argv)
+    app.setApplicationVersion(APP_VERSION)
+    app.setApplicationName("Video Downloader")
+    app.setOrganizationName("Fleece")
     app.setStyle("Fusion")
     sys.excepthook = handle_unhandled_exception
 
     window = VideoDownloader()
     window.show()
 
-    sys.exit(app.exec())
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

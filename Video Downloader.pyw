@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 RUNTIME_DIR = APP_DIR / ".runtime"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 VENV_PYTHONW = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
@@ -1666,7 +1666,7 @@ class VideoDownloader(QMainWindow):
 
 
 def run_self_test(output_dir):
-    assert APP_VERSION == "1.0.3"
+    assert APP_VERSION == "1.0.4"
     output_dir = Path(output_dir).resolve()
     checks = []
 

@@ -29,11 +29,11 @@ The shortcut starts the tool with its private Python environment. You can copy t
 
 The download contains only the installer and app. Setup gets the required components from their official sources and keeps the app-specific packages, settings, caches, and downloaded runtimes inside the app folder. It does not require administrator access, change your system PATH, or install global Python packages.
 
-Setup also installs one small shared launcher in `%LOCALAPPDATA%\Fleece Tools\Python Launcher` and sets `.pyw` files to open with it for your Windows account. The launcher always uses the selected tool's sibling `.venv\Scripts\pythonw.exe`, then its sibling `.runtime\python\pythonw.exe`. It never uses another tool's private Python.
+Setup also installs one small shared launcher in `%LOCALAPPDATA%\Fleece Tools\Python Launcher` and sets `.pyw` files to open with it for your Windows account. The launcher prefers the selected tool's sibling `.runtime\python\pythonw.exe` and keeps a legacy `.venv\Scripts\pythonw.exe` fallback for older Fleece Tool releases; it never uses another tool's Python.
 
 Before the first Fleece Tools association change, setup exports any existing per-user `.pyw` settings to that shared folder. If the previous setting cannot be backed up safely, setup stops without overwriting it. A later non-Fleece choice is also left alone.
 
-If compatible Python is already installed, the app uses a private `.venv` for its packages. That environment still relies on the existing Python installation for Python itself. If compatible Python is not installed, setup offers to download a fully private embedded Python runtime into the app folder.
+Setup installs or repairs official 64-bit Python 3.14.7 privately in `.runtime\python`. The shortcut uses that runtime directly, so it does not depend on or modify Microsoft Store or system Python.
 
 Run `Installer.bat` again whenever you want to repair the pinned downloader components. After downloading a newer release, run its installer to update those components. Setup also recreates the shortcut for the folder's current location, so run it again after moving the folder. Your selected save folder, format, and quality are kept.
 
@@ -58,6 +58,10 @@ Run `Installer.bat` again whenever you want to repair the pinned downloader comp
 The app has no telemetry, analytics, accounts, or usage tracking. To remove only Video Downloader, close it and delete its folder. The app does not install a background service, add itself to startup, or create an uninstaller entry.
 
 The shared `.pyw` launcher is used by every installed Fleece Tool, so removing one tool does not remove it. To restore the `.pyw` settings that existed before Fleece Tools first configured them, run `%LOCALAPPDATA%\Fleece Tools\Python Launcher\Restore pyw association.cmd`. The restore helper refuses to overwrite a newer non-Fleece choice. After restoring, and after removing every Fleece Tool that uses it, you can delete the shared `Python Launcher` folder. The registry backup files can contain local application names and paths, so review them before sharing.
+
+## source use
+
+The source is public for transparency and security review. Copyright 2026 Fleece. All rights reserved. No license is granted to use, modify, redistribute, sell, or publish derivative versions beyond the limited rights provided by the hosting platform.
 
 ## note
 

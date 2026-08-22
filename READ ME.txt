@@ -26,9 +26,9 @@ WHAT THE INSTALLER ADDS
 
 - Does not use or modify Microsoft Store or system Python.
 
-- Installs pinned PySide6 Essentials 6.11.1, yt-dlp 2026.7.4, and yt-dlp-ejs 0.8.0 from official PyPI.
+- Installs pinned PySide6 Essentials 6.11.2, yt-dlp 2026.8.19, and yt-dlp-ejs 0.8.0 from official PyPI.
 
-- Installs the verified FFmpeg 9.0 essentials build and Deno 2.9.5 privately in this folder.
+- Installs the verified FFmpeg 9.0.1 essentials build and Deno 2.9.5 privately in this folder.
 
 - Verifies downloaded private-runtime files with pinned SHA-256 checksums.
 

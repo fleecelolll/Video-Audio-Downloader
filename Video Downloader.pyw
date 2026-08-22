@@ -14,7 +14,17 @@ from urllib.parse import urlparse
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
+PYSIDE_VERSION = "6.11.2"
+YTDLP_VERSION = "2026.8.19"
+YTDLP_EJS_VERSION = "0.8.0"
+FFMPEG_VERSION = "9.0.1"
+DENO_VERSION = "2.9.5"
+FRAGMENT_WORKERS = max(1, min(4, (os.cpu_count() or 2) // 2))
+PROCESS_READ_CHUNK_BYTES = 65536
+PROCESS_LINE_HEAD_CHARS = 4096
+PROCESS_LINE_TAIL_CHARS = 4096
+PROCESS_LINE_TRUNCATION = " ... [output truncated; beginning and end shown] ... "
 RUNTIME_DIR = APP_DIR / ".runtime"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 VENV_PYTHONW = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
@@ -109,7 +119,7 @@ def bootstrap_local_python():
             os.path.normcase(os.path.realpath(local_python)),
             os.path.normcase(os.path.realpath(local_pythonw)),
         }
-        if current in valid_executables:
+        if current in valid_executables and sys.flags.isolated:
             return
 
         try:
@@ -129,7 +139,12 @@ def bootstrap_local_python():
 
         try:
             subprocess.Popen(
-                [str(local_pythonw), str(Path(__file__).resolve()), *sys.argv[1:]],
+                [
+                    str(local_pythonw),
+                    "-I",
+                    str(Path(__file__).resolve()),
+                    *sys.argv[1:],
+                ],
                 cwd=str(APP_DIR),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -262,6 +277,106 @@ def local_runtime_executable(name):
         if candidate.is_file():
             return candidate
     return None
+
+
+def bounded_process_line(text):
+    content_limit = PROCESS_LINE_HEAD_CHARS + PROCESS_LINE_TAIL_CHARS
+    if len(text) <= content_limit:
+        return text
+    return (
+        text[:PROCESS_LINE_HEAD_CHARS]
+        + PROCESS_LINE_TRUNCATION
+        + text[-PROCESS_LINE_TAIL_CHARS:]
+    )
+
+
+def build_download_arguments(url, download_folder, output_format, quality):
+    args = [
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--newline",
+        "--windows-filenames",
+        "--no-remote-components",
+        "--check-formats",
+        "--cache-dir",
+        str(YTDLP_CACHE_DIR),
+        "--concurrent-fragments",
+        str(FRAGMENT_WORKERS),
+        "--progress-template",
+        "download:PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
+        "-P",
+        str(download_folder),
+    ]
+
+    deno_executable = local_runtime_executable("deno")
+    if deno_executable is not None:
+        args.extend(
+            [
+                "--no-js-runtimes",
+                "--js-runtimes",
+                f"deno:{deno_executable}",
+            ]
+        )
+
+    ffmpeg_executable = local_runtime_executable("ffmpeg")
+    if ffmpeg_executable is not None:
+        args.extend(["--ffmpeg-location", str(ffmpeg_executable.parent)])
+
+    if output_format == "MP3":
+        args.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
+    else:
+        args.extend(["-t", "mp4"])
+        if quality != "Best":
+            args.extend(["-S", f"res:{quality.removesuffix('p')}"])
+
+    args.extend(["--no-playlist", "--", url])
+    return args
+
+
+def download_failure_message(messages):
+    output = "\n".join(messages).lower()
+    if "unsupported url" in output:
+        return "That website or link is not supported."
+    if "video unavailable" in output or "this video is unavailable" in output:
+        return "That video is unavailable or was removed."
+    if "requested format is not available" in output:
+        return "That quality is unavailable. Try Best or another quality."
+    if "sign in" in output or "private video" in output:
+        return "That video may be private or require an account."
+    if "http error 429" in output or "too many requests" in output:
+        return "The website temporarily limited requests. Wait and try again."
+    if "http error 403" in output or "403 forbidden" in output:
+        return (
+            "The website rejected the media request. Run Installer.bat to "
+            "refresh site support, then wait and try again."
+        )
+    if any(
+        marker in output
+        for marker in (
+            "connection timed out",
+            "network is unreachable",
+            "temporary failure in name resolution",
+        )
+    ):
+        return "The network request failed. Check the connection and try again."
+    if "no space left on device" in output or "disk full" in output:
+        return "The save drive is full. Free some space and try again."
+    if "permission denied" in output or "access is denied" in output:
+        return "The selected folder cannot be written. Choose another folder."
+    if "javascript runtime" in output or "yt-dlp-ejs" in output:
+        return "YouTube support is incomplete. Run Installer.bat again."
+    if any(
+        marker in output
+        for marker in (
+            "ffmpeg not found",
+            "ffprobe not found",
+            "ffmpeg exited with code",
+            "postprocessing:",
+        )
+    ):
+        return "FFmpeg could not complete the media conversion. Run Installer.bat again."
+    return "The download failed. Check the messages above for details."
 
 
 class TrafficLightButton(QPushButton):
@@ -1270,30 +1385,63 @@ class VideoDownloader(QMainWindow):
             return False
         return result.returncode == 0
 
+    @staticmethod
+    def command_starts_with(command, prefix):
+        try:
+            result = subprocess.run(
+                [str(part) for part in command],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=8,
+                env=subprocess_environment(),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0 and result.stdout.startswith(prefix)
+
     def preflight_components(self):
         issues = []
 
         if self.runtime_storage_error:
             issues.append("local runtime folder")
 
-        if not self.command_works(
+        try:
+            installed_pyside = metadata.version("PySide6-Essentials")
+        except metadata.PackageNotFoundError:
+            installed_pyside = ""
+        if installed_pyside != PYSIDE_VERSION:
+            issues.append("PySide6")
+
+        try:
+            installed_ytdlp = metadata.version("yt-dlp")
+        except metadata.PackageNotFoundError:
+            installed_ytdlp = ""
+        if installed_ytdlp != YTDLP_VERSION or not self.command_works(
             [sys.executable, "-m", "yt_dlp", "--ignore-config", "--version"]
         ):
             issues.append("yt-dlp")
 
         try:
-            metadata.version("yt-dlp-ejs")
+            installed_ejs = metadata.version("yt-dlp-ejs")
         except metadata.PackageNotFoundError:
+            installed_ejs = ""
+        if installed_ejs != YTDLP_EJS_VERSION:
             issues.append("YouTube support")
 
-        for command, label in (
-            ("ffmpeg", "FFmpeg"),
-            ("ffprobe", "FFprobe"),
-            ("deno", "Deno"),
+        for command, label, argument, prefix in (
+            ("ffmpeg", "FFmpeg", "-version", f"ffmpeg version {FFMPEG_VERSION}"),
+            ("ffprobe", "FFprobe", "-version", f"ffprobe version {FFMPEG_VERSION}"),
+            ("deno", "Deno", "--version", f"deno {DENO_VERSION}"),
         ):
             executable = local_runtime_executable(command)
-            if executable is None or not self.command_works(
-                [executable, "--version" if command == "deno" else "-version"]
+            if executable is None or not self.command_starts_with(
+                [executable, argument],
+                prefix,
             ):
                 issues.append(label)
 
@@ -1427,36 +1575,12 @@ class VideoDownloader(QMainWindow):
         self.process_line_buffer = ""
         self.process_messages = []
 
-        args = [
-            "-m",
-            "yt_dlp",
-            "--ignore-config",
-            "--newline",
-            "--windows-filenames",
-            "--cache-dir",
-            str(YTDLP_CACHE_DIR),
-            "--concurrent-fragments",
-            "8",
-            "--progress-template",
-            "download:PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
-            "-P",
+        args = build_download_arguments(
+            url,
             self.download_folder,
-        ]
-
-        ffmpeg_executable = local_runtime_executable("ffmpeg")
-        if ffmpeg_executable is not None:
-            args.extend(["--ffmpeg-location", str(ffmpeg_executable.parent)])
-
-        if self.format_dropdown.currentText() == "MP3":
-            args.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
-        else:
-            args.extend(["-t", "mp4"])
-            quality = self.quality_dropdown.currentText()
-            if quality != "Best":
-                height = quality.removesuffix("p")
-                args.extend(["-S", f"res:{height}"])
-
-        args.extend(["--no-playlist", "--", url])
+            self.format_dropdown.currentText(),
+            self.quality_dropdown.currentText(),
+        )
 
         self.process = QProcess(self)
         self.process.setProcessEnvironment(qprocess_environment())
@@ -1487,16 +1611,23 @@ class VideoDownloader(QMainWindow):
         if not self.process or self.process_decoder is None:
             return
 
-        data = bytes(self.process.readAllStandardOutput())
-        if data:
+        while True:
+            data = bytes(self.process.read(PROCESS_READ_CHUNK_BYTES))
+            if not data:
+                break
             self.consume_process_text(self.process_decoder.decode(data))
 
     def flush_process_output(self):
         if not self.process or self.process_decoder is None:
             return
 
-        data = bytes(self.process.readAllStandardOutput())
-        text = self.process_decoder.decode(data, final=True)
+        while True:
+            data = bytes(self.process.read(PROCESS_READ_CHUNK_BYTES))
+            if not data:
+                break
+            self.consume_process_text(self.process_decoder.decode(data))
+
+        text = self.process_decoder.decode(b"", final=True)
         self.process_decoder = None
         self.consume_process_text(text, final=True)
 
@@ -1512,14 +1643,21 @@ class VideoDownloader(QMainWindow):
         if final and self.process_line_buffer:
             self.handle_process_line(self.process_line_buffer.rstrip("\r"))
             self.process_line_buffer = ""
+        elif not final:
+            self.process_line_buffer = bounded_process_line(
+                self.process_line_buffer
+            )
 
     def handle_process_line(self, raw_line):
-        line = raw_line.strip()
+        oversized = len(raw_line) > (
+            PROCESS_LINE_HEAD_CHARS + PROCESS_LINE_TAIL_CHARS
+        )
+        line = bounded_process_line(raw_line).strip()
         if not line:
             return
 
         match = self.PROGRESS_RE.search(line)
-        if match:
+        if match and not oversized:
             percent_text, speed, eta = match.groups()
 
             try:
@@ -1609,21 +1747,7 @@ class VideoDownloader(QMainWindow):
         self.process_decoder = None
 
     def append_failure_summary(self, exit_code):
-        output = "\n".join(self.process_messages).lower()
-        if "unsupported url" in output:
-            message = "That website or link is not supported."
-        elif "requested format is not available" in output:
-            message = "That quality is unavailable. Try Best or another quality."
-        elif "ffmpeg" in output or "ffprobe" in output:
-            message = "FFmpeg could not be used. Run Installer.bat again."
-        elif "javascript runtime" in output or "yt-dlp-ejs" in output:
-            message = "YouTube support is incomplete. Run Installer.bat again."
-        elif "http error 403" in output or "http error 429" in output:
-            message = "The website blocked the request. Wait a while and try again."
-        elif "sign in" in output or "private video" in output:
-            message = "That video may be private or require an account."
-        else:
-            message = "The download failed. Check the messages above for details."
+        message = download_failure_message(self.process_messages)
         self.append_log(f"{message} (code {exit_code})")
 
     def process_error(self, error):
@@ -1666,7 +1790,7 @@ class VideoDownloader(QMainWindow):
 
 
 def run_self_test(output_dir):
-    assert APP_VERSION == "1.0.4"
+    assert APP_VERSION == "1.0.5"
     output_dir = Path(output_dir).resolve()
     checks = []
 
@@ -1686,22 +1810,131 @@ def run_self_test(output_dir):
     assert str(RUNTIME_DIR / "deno") in runtime_path
     checks.append("the child-process path includes both private media runtimes")
 
-    for command in ("ffmpeg", "ffprobe", "deno"):
+    for command, argument, prefix in (
+        ("ffmpeg", "-version", f"ffmpeg version {FFMPEG_VERSION}"),
+        ("ffprobe", "-version", f"ffprobe version {FFMPEG_VERSION}"),
+        ("deno", "--version", f"deno {DENO_VERSION}"),
+    ):
         executable = local_runtime_executable(command)
         assert executable is not None
-        argument = "--version" if command == "deno" else "-version"
-        assert VideoDownloader.command_works([executable, argument])
+        assert VideoDownloader.command_starts_with([executable, argument], prefix)
     checks.append("FFmpeg, FFprobe, and Deno start without network access")
 
-    assert metadata.version("PySide6-Essentials") == "6.11.1"
-    assert metadata.version("yt-dlp") == "2026.7.4"
-    assert metadata.version("yt-dlp-ejs") == "0.8.0"
+    assert metadata.version("PySide6-Essentials") == PYSIDE_VERSION
+    assert metadata.version("yt-dlp") == YTDLP_VERSION
+    assert metadata.version("yt-dlp-ejs") == YTDLP_EJS_VERSION
     checks.append("the pinned Python components match this release")
 
     assert VideoDownloader.command_works(
         [sys.executable, "-m", "yt_dlp", "--ignore-config", "--version"]
     )
     checks.append("yt-dlp starts with user configuration disabled")
+
+    test_url = "https://example.invalid/watch?v=offline-test"
+    mp4_args = build_download_arguments(test_url, output_dir, "MP4", "720p")
+    mp3_args = build_download_arguments(test_url, output_dir, "MP3", "Best")
+    assert 1 <= FRAGMENT_WORKERS <= 4
+    assert mp4_args[mp4_args.index("--concurrent-fragments") + 1] == str(
+        FRAGMENT_WORKERS
+    )
+    assert "--check-formats" in mp4_args
+    assert "--no-remote-components" in mp4_args
+    assert "--no-js-runtimes" in mp4_args
+    assert "--js-runtimes" in mp4_args
+    assert "--ffmpeg-location" in mp4_args
+    assert mp4_args[-3:] == ["--no-playlist", "--", test_url]
+    assert mp4_args[mp4_args.index("-S") + 1] == "res:720"
+    assert mp3_args[mp3_args.index("--audio-format") + 1] == "mp3"
+    checks.append("download commands are private, bounded, and format-specific")
+
+    rejection = download_failure_message(
+        [
+            "ffmpeg version 9.0.1",
+            "HTTP error 403 Forbidden",
+            "ERROR: ffmpeg exited with code 1",
+        ]
+    )
+    conversion = download_failure_message(["ERROR: ffmpeg exited with code 1"])
+    assert rejection.startswith("The website rejected")
+    assert conversion.startswith("FFmpeg could not complete")
+    checks.append("media-request failures are not mislabeled as FFmpeg damage")
+
+    normal_line = "normal yt-dlp output"
+    assert bounded_process_line(normal_line) == normal_line
+    error_tail = "HTTP error 403 Forbidden"
+    preserved_head = "HEAD:" + "h" * (
+        PROCESS_LINE_HEAD_CHARS - len("HEAD:")
+    )
+    preserved_tail = "t" * (
+        PROCESS_LINE_TAIL_CHARS - len(error_tail)
+    ) + error_tail
+    oversized_line = preserved_head + "middle" * 10000 + preserved_tail
+    expected_line = (
+        preserved_head + PROCESS_LINE_TRUNCATION + preserved_tail
+    )
+    assert bounded_process_line(oversized_line) == expected_line
+    assert expected_line.count(PROCESS_LINE_TRUNCATION) == 1
+    assert download_failure_message([expected_line]).startswith(
+        "The website rejected"
+    )
+
+    class OutputHarness:
+        PROGRESS_RE = VideoDownloader.PROGRESS_RE
+
+        def __init__(self):
+            self.process_line_buffer = ""
+            self.process_messages = []
+            self.logged_lines = []
+
+        def append_log(self, message):
+            self.logged_lines.append(message)
+
+        def handle_process_line(self, raw_line):
+            VideoDownloader.handle_process_line(self, raw_line)
+
+    displayed = OutputHarness()
+    displayed.handle_process_line(oversized_line)
+    assert displayed.process_messages == [expected_line]
+    assert displayed.logged_lines == [expected_line]
+
+    progress_prefix = "PROGRESS: 10%|1 MiB/s|3s"
+    progress_head = progress_prefix + "p" * (
+        PROCESS_LINE_HEAD_CHARS - len(progress_prefix)
+    )
+    oversized_progress = (
+        progress_head + "middle" * 10000 + preserved_tail
+    )
+    expected_progress = (
+        progress_head + PROCESS_LINE_TRUNCATION + preserved_tail
+    )
+    progress_display = OutputHarness()
+    progress_display.handle_process_line(oversized_progress)
+    assert progress_display.process_messages == [expected_progress]
+    assert progress_display.logged_lines == [expected_progress]
+    assert download_failure_message(
+        progress_display.process_messages
+    ).startswith("The website rejected")
+
+    streamed = OutputHarness()
+    for chunk in (
+        preserved_head + "a" * 20000,
+        "b" * 20000,
+    ):
+        VideoDownloader.consume_process_text(streamed, chunk)
+        assert len(streamed.process_line_buffer) <= len(expected_line)
+    VideoDownloader.consume_process_text(
+        streamed,
+        preserved_tail + "\nordinary\nunfinished",
+        final=True,
+    )
+    assert streamed.process_line_buffer == ""
+    assert streamed.process_messages == [
+        expected_line,
+        "ordinary",
+        "unfinished",
+    ]
+    assert streamed.logged_lines == streamed.process_messages
+    checks.append("oversized process output keeps bounded error context")
 
     if NATIVE_KERNEL32 is not None:
         test_name = rf"Local\FleeceVideoDownloaderSelfTest-{os.getpid()}"

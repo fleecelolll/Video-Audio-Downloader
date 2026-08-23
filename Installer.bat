@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title Video Downloader Setup
+title Video + Audio Downloader Setup
 
 set "NO_PAUSE=0"
 set "ASSUME_YES=0"
@@ -19,7 +19,7 @@ if /I "%~1"=="--yes" goto ParseYes
 if /I "%~1"=="--skip-association" goto ParseSkipAssociation
 if /I "%~1"=="--test-association" goto ParseTestAssociation
 echo.
-echo   Unknown setup option.
+echo   Unknown setup option. No setup changes were made.
 echo   Supported options: --yes --no-pause --skip-association --test-association
 echo.
 exit /b 2
@@ -48,7 +48,8 @@ goto ParseArguments
 :ArgumentsReady
 
 set "ROOT=%~dp0"
-set "APP_FILE=%ROOT%Video Downloader.pyw"
+set "MAX_ROOT_LENGTH=72"
+set "APP_FILE=%ROOT%Video + Audio Downloader.pyw"
 set "LOG=%ROOT%setup.log"
 set "RUNTIME=%ROOT%.runtime"
 set "SETUP_LOCK=%RUNTIME%\setup.lock"
@@ -130,11 +131,31 @@ if not exist "%ROBOCOPY_EXE%" (
     set "FAIL_MESSAGE=Trusted Windows file-copy support is missing from the system folder."
     goto Failed
 )
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "if([IO.Path]::GetFullPath($env:ROOT).Length -gt [int]$env:MAX_ROOT_LENGTH){exit 2}" >nul 2>nul
+if errorlevel 1 (
+    set "FAIL_MESSAGE=The complete app folder path must be 72 characters or fewer. Move the extracted folder closer to the drive root and try again."
+    goto Failed
+)
 call :ValidatePrivatePaths
 if errorlevel 1 (
     set "FAIL_MESSAGE=The app folder or one of its private setup paths is not safe to modify. Extract a fresh copy to a normal folder and try again."
     goto Failed
 )
+if "%TEST_ASSOCIATION%"=="1" goto SetupApprovalReady
+cls
+echo.
+echo  ==================================================
+echo             VIDEO + AUDIO DOWNLOADER SETUP
+echo  ==================================================
+echo.
+if "%ASSUME_YES%"=="1" (
+    echo   Install or repair Video + Audio Downloader in this folder? [Y/N]: Y
+) else (
+    choice /C YN /N /M "  Install or repair Video + Audio Downloader in this folder? [Y/N]: "
+    if errorlevel 2 goto Cancelled
+)
+
+:SetupApprovalReady
 if exist "%LOG%" del /f /q "%LOG%" >nul 2>nul
 if exist "%LOG%" (
     set "FAIL_MESSAGE=The previous setup log could not be replaced safely."
@@ -161,7 +182,7 @@ call :AcquireSetupLock
 if errorlevel 1 goto SetupAlreadyRunning
 call :EnsureAppClosed
 if errorlevel 1 (
-    set "FAIL_MESSAGE=Video Downloader is open. Close the app before installing or repairing its files."
+    set "FAIL_MESSAGE=Video + Audio Downloader is open. Close the app before installing or repairing its files."
     goto Failed
 )
 if exist "%SETUP_MARKER%" del /f /q "%SETUP_MARKER%" >nul 2>nul
@@ -187,10 +208,10 @@ call :LogCurrent
 cls
 echo.
 echo  ==================================================
-echo                  VIDEO DOWNLOADER SETUP
+echo             VIDEO + AUDIO DOWNLOADER SETUP
 echo  ==================================================
 echo.
-echo   The app runtime stays inside this folder.
+echo   The app and private components stay inside this folder.
 echo   A small per-user Fleece Tools launcher opens .pyw files.
 echo   Setup does not need administrator access.
 echo.
@@ -206,12 +227,12 @@ echo.
 echo  ==================================================
 
 if not exist "%APP_FILE%" (
-    set "FAIL_MESSAGE=Video Downloader.pyw is missing from this folder."
+    set "FAIL_MESSAGE=Video + Audio Downloader.pyw is missing from this folder."
     goto Failed
 )
 
 echo.
-echo   [ STEP 1 / 5 ]   Private Python environment
+echo   [ STEP 1 / 3 ]   Private Python environment
 echo.
 call :ValidateEmbeddedPython
 if not errorlevel 1 (
@@ -237,13 +258,6 @@ echo      Setup can place Python %PYTHON_VERSION% privately inside
 echo      this folder. It will not replace your current Python,
 echo      change PATH, install global packages, or need admin.
 echo.
-if "%ASSUME_YES%"=="1" (
-    echo      Install private Python %PYTHON_VERSION% now? [Y/N]: Y
-) else (
-    choice /C YN /N /M "      Install private Python %PYTHON_VERSION% now? [Y/N]: "
-    if errorlevel 2 goto Cancelled
-)
-
 echo.
 echo      Downloading and preparing private Python...
 call :InstallEmbedPy
@@ -269,7 +283,7 @@ if errorlevel 1 (
 echo      Done.
 
 echo.
-echo   [ STEP 2 / 5 ]   App components
+echo   [ STEP 2 / 3 ]   App components
 echo.
 echo      Installing or repairing trusted packages from PyPI...
 echo      Existing components are reused whenever possible.
@@ -291,7 +305,7 @@ if errorlevel 1 (
 echo      Done.
 
 echo.
-echo   [ STEP 3 / 5 ]   FFmpeg and FFprobe
+echo      Installing or repairing FFmpeg and FFprobe...
 echo.
 call :TouchSetupLock
 if errorlevel 1 (
@@ -320,7 +334,7 @@ if errorlevel 1 (
 echo      Done.
 
 echo.
-echo   [ STEP 4 / 5 ]   Deno
+echo      Installing or repairing the local Deno runtime...
 echo.
 call :ValidateDeno
 if not errorlevel 1 (
@@ -344,7 +358,7 @@ if errorlevel 1 (
 echo      Done.
 
 echo.
-echo   [ STEP 5 / 5 ]   Final checks
+echo   [ STEP 3 / 3 ]   Final checks
 echo.
 echo      Testing every required component without downloading media...
 call :TouchSetupLock
@@ -357,7 +371,7 @@ if errorlevel 1 (
     set "FAIL_MESSAGE=One or more final component checks failed."
     goto Failed
 )
-echo      Creating the Video Downloader start shortcut...
+echo      Creating the Video + Audio Downloader start shortcut...
 call :CreateShortcut
 if errorlevel 1 (
     set "FAIL_MESSAGE=The start shortcut could not be created."
@@ -393,12 +407,12 @@ echo  ==================================================
 echo                ALL SET, YOU ARE READY
 echo  ==================================================
 echo.
-echo   Double click the "Video Downloader" shortcut in this
+echo   Double click the "Video + Audio Downloader" shortcut in this
 echo   folder to start. You can copy the shortcut to your
 echo   Desktop or pin it to the taskbar.
 echo.
 echo   Run this installer again whenever you want to
-echo   repair the pinned downloader components.
+echo   repair the app's private local files or refresh the shortcut.
 echo.
 if not "%SKIP_ASSOCIATION%"=="1" (
     echo   The shared .pyw launcher and restore helper are in:
@@ -417,22 +431,20 @@ echo  ==================================================
 echo                 SETUP ALREADY RUNNING
 echo  ==================================================
 echo.
-echo   Another Video Downloader setup is already running.
+echo   Another Video + Audio Downloader setup is already running.
 echo   Let that window finish, then try again.
 echo.
 call :PauseIfNeeded
 exit /b 1
 
 :Cancelled
-set "LOG_MESSAGE=Setup cancelled by the user before private Python installation."
-call :LogCurrent
 call :ReleaseSetupLock
 echo.
 echo  ==================================================
 echo                     SETUP CANCELLED
 echo  ==================================================
 echo.
-echo   Nothing was installed outside this project folder.
+echo   Nothing was installed or changed after cancellation.
 echo   Run Installer.bat again whenever you are ready.
 echo.
 call :PauseIfNeeded
@@ -1218,15 +1230,16 @@ echo Shared .pyw launcher offline checks failed. No association was changed.
 exit /b 1
 
 :CreateShortcut
-set "LINK_PATH=%ROOT%Video Downloader.lnk"
+set "LINK_PATH=%ROOT%Video + Audio Downloader.lnk"
+set "LEGACY_LINK_PATH=%ROOT%Video Downloader.lnk"
 set "LINK_NEW=%RUNTIME%\shortcut.new.lnk"
 set "LINK_BACKUP=%RUNTIME%\shortcut.previous.lnk"
 set "LINK_TARGET=%APP_PYW%"
 set "LINK_DIR=%ROOT%"
-set "LINK_DESCRIPTION=Video Downloader"
+set "LINK_DESCRIPTION=Video + Audio Downloader"
 set "LINK_ICON=%APP_PYW%,0"
 if not exist "%LINK_TARGET%" exit /b 1
-"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $path=$env:LINK_PATH; $new=$env:LINK_NEW; $backup=$env:LINK_BACKUP; $arguments='-I '+[char]34+$env:APP_FILE+[char]34; $samePath={param($a,$b) [IO.Path]::GetFullPath($a).TrimEnd('\') -ieq [IO.Path]::GetFullPath($b).TrimEnd('\')}; $verify={param($shortcut,$stage) if(-not(& $samePath $shortcut.TargetPath $env:LINK_TARGET) -or $shortcut.Arguments -cne $arguments -or -not(& $samePath $shortcut.WorkingDirectory $env:LINK_DIR) -or $shortcut.Description -cne $env:LINK_DESCRIPTION -or [int]$shortcut.WindowStyle -ne 1 -or ($shortcut.IconLocation-replace ',\s+',',') -ine ($env:LINK_ICON-replace ',\s+',',') -or $shortcut.Hotkey){throw ($stage+' shortcut did not preserve its isolated launcher contract.')}}; if(Test-Path -LiteralPath $backup){if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $backup -Force}else{Move-Item -LiteralPath $backup -Destination $path}}; if(Test-Path -LiteralPath $new){Remove-Item -LiteralPath $new -Force}; $shell=New-Object -ComObject WScript.Shell; $link=$shell.CreateShortcut($new); $link.TargetPath=$env:LINK_TARGET; $link.Arguments=$arguments; $link.WorkingDirectory=$env:LINK_DIR; $link.WindowStyle=1; $link.Description=$env:LINK_DESCRIPTION; $link.IconLocation=$env:LINK_ICON; $link.Hotkey=''; $link.Save(); $candidate=$shell.CreateShortcut($new); & $verify $candidate 'New'; $hadOld=Test-Path -LiteralPath $path; $movedOld=$false; try{if($hadOld){Move-Item -LiteralPath $path -Destination $backup; $movedOld=$true}; Move-Item -LiteralPath $new -Destination $path; $verified=$shell.CreateShortcut($path); & $verify $verified 'Installed'; if(Test-Path -LiteralPath $backup){Remove-Item -LiteralPath $backup -Force}; Write-Output ('Created and validated shortcut: ' + $path)}catch{if($movedOld){if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}; if(Test-Path -LiteralPath $backup){Move-Item -LiteralPath $backup -Destination $path}}elseif(-not $hadOld -and (Test-Path -LiteralPath $path)){Remove-Item -LiteralPath $path -Force}; throw}finally{if(Test-Path -LiteralPath $new){Remove-Item -LiteralPath $new -Force}}" >>"%LOG%" 2>&1
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $path=$env:LINK_PATH; $legacy=$env:LEGACY_LINK_PATH; $new=$env:LINK_NEW; $backup=$env:LINK_BACKUP; $arguments='-I '+[char]34+$env:APP_FILE+[char]34; $samePath={param($a,$b) [IO.Path]::GetFullPath($a).TrimEnd('\') -ieq [IO.Path]::GetFullPath($b).TrimEnd('\')}; $verify={param($shortcut,$stage) if(-not(& $samePath $shortcut.TargetPath $env:LINK_TARGET) -or $shortcut.Arguments -cne $arguments -or -not(& $samePath $shortcut.WorkingDirectory $env:LINK_DIR) -or $shortcut.Description -cne $env:LINK_DESCRIPTION -or [int]$shortcut.WindowStyle -ne 1 -or ($shortcut.IconLocation-replace ',\s+',',') -ine ($env:LINK_ICON-replace ',\s+',',') -or $shortcut.Hotkey){throw ($stage+' shortcut did not preserve its isolated launcher contract.')}}; if(Test-Path -LiteralPath $backup){if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $backup -Force}else{Move-Item -LiteralPath $backup -Destination $path}}; if(Test-Path -LiteralPath $new){Remove-Item -LiteralPath $new -Force}; $shell=New-Object -ComObject WScript.Shell; $link=$shell.CreateShortcut($new); $link.TargetPath=$env:LINK_TARGET; $link.Arguments=$arguments; $link.WorkingDirectory=$env:LINK_DIR; $link.WindowStyle=1; $link.Description=$env:LINK_DESCRIPTION; $link.IconLocation=$env:LINK_ICON; $link.Hotkey=''; $link.Save(); $candidate=$shell.CreateShortcut($new); & $verify $candidate 'New'; $hadOld=Test-Path -LiteralPath $path; $movedOld=$false; try{if($hadOld){Move-Item -LiteralPath $path -Destination $backup; $movedOld=$true}; Move-Item -LiteralPath $new -Destination $path; $verified=$shell.CreateShortcut($path); & $verify $verified 'Installed'; if($legacy -and -not(& $samePath $legacy $path) -and (Test-Path -LiteralPath $legacy)){Remove-Item -LiteralPath $legacy -Force}; if(Test-Path -LiteralPath $backup){Remove-Item -LiteralPath $backup -Force}; Write-Output ('Created and validated shortcut: ' + $path)}catch{if($movedOld){if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}; if(Test-Path -LiteralPath $backup){Move-Item -LiteralPath $backup -Destination $path}}elseif(-not $hadOld -and (Test-Path -LiteralPath $path)){Remove-Item -LiteralPath $path -Force}; throw}finally{if(Test-Path -LiteralPath $new){Remove-Item -LiteralPath $new -Force}}" >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
 if not exist "%LINK_PATH%" exit /b 1
 exit /b 0

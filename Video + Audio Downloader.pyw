@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 APP_NAME = "Video + Audio Downloader"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 PYSIDE_VERSION = "6.11.2"
 YTDLP_VERSION = "2026.8.19"
 YTDLP_EJS_VERSION = "0.8.0"
@@ -26,6 +26,8 @@ PROCESS_READ_CHUNK_BYTES = 65536
 PROCESS_LINE_HEAD_CHARS = 4096
 PROCESS_LINE_TAIL_CHARS = 4096
 PROCESS_LINE_TRUNCATION = " ... [output truncated; beginning and end shown] ... "
+SITES_STDOUT_MAX_BYTES = 4 * 1024 * 1024
+SITES_STDERR_MAX_BYTES = 256 * 1024
 RUNTIME_DIR = APP_DIR / ".runtime"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 VENV_PYTHONW = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
@@ -53,6 +55,11 @@ if os.name == "nt":
     NATIVE_KERNEL32.CreateMutexW.restype = wintypes.HANDLE
     NATIVE_KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
     NATIVE_KERNEL32.CloseHandle.restype = wintypes.BOOL
+    NATIVE_KERNEL32.GetSystemDirectoryW.argtypes = (
+        wintypes.LPWSTR,
+        wintypes.UINT,
+    )
+    NATIVE_KERNEL32.GetSystemDirectoryW.restype = wintypes.UINT
 else:
     NATIVE_KERNEL32 = None
 
@@ -281,6 +288,57 @@ def local_runtime_executable(name):
     return None
 
 
+def system_taskkill_executable():
+    if NATIVE_KERNEL32 is None:
+        return None
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = NATIVE_KERNEL32.GetSystemDirectoryW(buffer, len(buffer))
+    if not length or length >= len(buffer):
+        return None
+    candidate = Path(buffer.value) / "taskkill.exe"
+    return candidate if candidate.is_file() else None
+
+
+def yt_dlp_arguments(*arguments):
+    return [
+        "-I",
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--no-plugin-dirs",
+        *arguments,
+    ]
+
+
+def is_valid_download_url(url):
+    try:
+        parsed_url = urlparse(url)
+        return (
+            parsed_url.scheme.lower() in {"http", "https"}
+            and bool(parsed_url.netloc)
+            and bool(parsed_url.hostname)
+        )
+    except ValueError:
+        return False
+
+
+def prepare_download_folder(folder_value):
+    folder = Path(folder_value).expanduser()
+    folder.mkdir(parents=True, exist_ok=True)
+    if not folder.is_dir():
+        raise OSError("The selected path is not a folder.")
+    with tempfile.NamedTemporaryFile(dir=folder):
+        pass
+    return folder.resolve(strict=True)
+
+
+def extend_bounded_bytes(buffer, data, limit):
+    available = max(0, limit - len(buffer))
+    kept = data[:available]
+    buffer.extend(kept)
+    return len(data) - len(kept)
+
+
 def bounded_process_line(text):
     content_limit = PROCESS_LINE_HEAD_CHARS + PROCESS_LINE_TAIL_CHARS
     if len(text) <= content_limit:
@@ -293,10 +351,7 @@ def bounded_process_line(text):
 
 
 def build_download_arguments(url, download_folder, output_format, quality):
-    args = [
-        "-m",
-        "yt_dlp",
-        "--ignore-config",
+    args = yt_dlp_arguments(
         "--newline",
         "--windows-filenames",
         "--no-remote-components",
@@ -309,7 +364,7 @@ def build_download_arguments(url, download_folder, output_format, quality):
         "download:PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
         "-P",
         str(download_folder),
-    ]
+    )
 
     deno_executable = local_runtime_executable("deno")
     if deno_executable is not None:
@@ -688,6 +743,8 @@ class SitesWindow(QWidget):
         self.version_process = None
         self.output_buffer = bytearray()
         self.error_buffer = bytearray()
+        self.output_truncated = False
+        self.error_truncated = False
 
         self.setWindowTitle("Supported sites")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
@@ -755,71 +812,111 @@ class SitesWindow(QWidget):
             self.load_sites()
 
     def refresh(self):
-        if self.list_process is not None:
+        if self.list_process is not None or self.version_process is not None:
             return
         self.loaded = False
         self.load_sites()
 
     def load_sites(self):
-        if self.list_process is not None:
+        if self.list_process is not None or self.version_process is not None:
             return
 
         self.list_widget.clear()
         self.output_buffer.clear()
         self.error_buffer.clear()
+        self.output_truncated = False
+        self.error_truncated = False
         self.count_label.setText("Loading…")
 
-        self.version_process = QProcess(self)
-        self.version_process.setProcessEnvironment(qprocess_environment())
-        self.version_process.setWorkingDirectory(str(APP_DIR))
-        self.version_process.finished.connect(self.version_finished)
-        self.version_process.errorOccurred.connect(self.version_error)
-        self.version_process.start(
+        version_process = QProcess(self)
+        self.version_process = version_process
+        version_process.setProcessEnvironment(qprocess_environment())
+        version_process.setWorkingDirectory(str(APP_DIR))
+        version_process.finished.connect(
+            lambda exit_code, exit_status, process=version_process: (
+                self.version_finished(process, exit_code, exit_status)
+            )
+        )
+        version_process.errorOccurred.connect(
+            lambda error, process=version_process: self.version_error(process, error)
+        )
+        version_process.start(
             self.python_path,
-            ["-m", "yt_dlp", "--ignore-config", "--version"],
+            yt_dlp_arguments("--version"),
         )
 
-        self.list_process = QProcess(self)
-        self.list_process.setProcessEnvironment(qprocess_environment())
-        self.list_process.setWorkingDirectory(str(APP_DIR))
-        self.list_process.readyReadStandardOutput.connect(self.read_list_output)
-        self.list_process.readyReadStandardError.connect(self.read_list_error)
-        self.list_process.finished.connect(self.list_finished)
-        self.list_process.errorOccurred.connect(self.list_error)
-        self.list_process.start(
+        list_process = QProcess(self)
+        self.list_process = list_process
+        list_process.setProcessEnvironment(qprocess_environment())
+        list_process.setWorkingDirectory(str(APP_DIR))
+        list_process.readyReadStandardOutput.connect(
+            lambda process=list_process: self.read_list_output(process)
+        )
+        list_process.readyReadStandardError.connect(
+            lambda process=list_process: self.read_list_error(process)
+        )
+        list_process.finished.connect(
+            lambda exit_code, exit_status, process=list_process: (
+                self.list_finished(process, exit_code, exit_status)
+            )
+        )
+        list_process.errorOccurred.connect(
+            lambda error, process=list_process: self.list_error(process, error)
+        )
+        list_process.start(
             self.python_path,
-            [
-                "-m",
-                "yt_dlp",
-                "--ignore-config",
+            yt_dlp_arguments(
                 "--no-warnings",
                 "--list-extractors",
-            ],
+            ),
         )
 
-    def read_list_output(self):
-        if not self.list_process:
+    def read_list_output(self, process):
+        if self.list_process is not process:
             return
-        self.output_buffer.extend(bytes(self.list_process.readAllStandardOutput()))
+        data = bytes(process.readAllStandardOutput())
+        dropped = extend_bounded_bytes(
+            self.output_buffer,
+            data,
+            SITES_STDOUT_MAX_BYTES,
+        )
+        if dropped and not self.output_truncated:
+            self.output_truncated = True
+            process.kill()
 
-    def read_list_error(self):
-        if not self.list_process:
+    def read_list_error(self, process):
+        if self.list_process is not process:
             return
-        self.error_buffer.extend(bytes(self.list_process.readAllStandardError()))
+        data = bytes(process.readAllStandardError())
+        dropped = extend_bounded_bytes(
+            self.error_buffer,
+            data,
+            SITES_STDERR_MAX_BYTES,
+        )
+        if dropped and not self.error_truncated:
+            self.error_truncated = True
+            process.kill()
 
     def show_list_failure(self):
         error_text = self.error_buffer.decode("utf-8", errors="replace").strip()
         self.count_label.setText(
             "Could not run yt-dlp. Re-run installer.bat to repair setup."
         )
-        self.count_label.setToolTip(error_text[-1000:] if error_text else "")
+        if self.output_truncated or self.error_truncated:
+            self.count_label.setToolTip(
+                "yt-dlp returned unexpectedly large output, so the list was stopped."
+            )
+        else:
+            self.count_label.setToolTip(error_text[-1000:] if error_text else "")
 
-    def version_finished(self, exit_code, exit_status):
+    def version_finished(self, process, exit_code, exit_status):
+        if self.version_process is not process:
+            return
         version = ""
-        if self.version_process and exit_code == 0:
-            version = bytes(
-                self.version_process.readAllStandardOutput()
-            ).decode("utf-8", errors="replace").strip()
+        if exit_code == 0:
+            version = bytes(process.readAllStandardOutput()).decode(
+                "utf-8", errors="replace"
+            ).strip()
         self.version_process = None
 
         if version:
@@ -828,17 +925,19 @@ class SitesWindow(QWidget):
                 "installer.bat to update yt-dlp and this list."
             )
 
-    def version_error(self, error):
-        if self.version_process and error == QProcess.FailedToStart:
+    def version_error(self, process, error):
+        if self.version_process is process and error == QProcess.FailedToStart:
             self.version_process = None
 
-    def list_finished(self, exit_code, exit_status):
-        self.read_list_output()
-        self.read_list_error()
+    def list_finished(self, process, exit_code, exit_status):
+        if self.list_process is not process:
+            return
+        self.read_list_output(process)
+        self.read_list_error(process)
         self.list_process = None
         self.loaded = True
 
-        if exit_code != 0:
+        if exit_code != 0 or self.output_truncated or self.error_truncated:
             self.show_list_failure()
             return
 
@@ -862,10 +961,14 @@ class SitesWindow(QWidget):
         self.list_widget.addItems(names)
         self.apply_filter(self.search_input.text())
 
-    def list_error(self, error):
-        self.read_list_error()
-        self.list_process = None
-        self.show_list_failure()
+    def list_error(self, process, error):
+        if self.list_process is not process:
+            return
+        self.read_list_error(process)
+        if error == QProcess.FailedToStart:
+            self.list_process = None
+            self.loaded = True
+            self.show_list_failure()
 
     def apply_filter(self, text):
         text = text.strip().lower()
@@ -1414,37 +1517,31 @@ class VideoDownloader(QMainWindow):
 
         try:
             installed_pyside = metadata.version("PySide6-Essentials")
-        except metadata.PackageNotFoundError:
+        except (metadata.PackageNotFoundError, OSError, ValueError):
             installed_pyside = ""
         if installed_pyside != PYSIDE_VERSION:
             issues.append("PySide6")
 
         try:
             installed_ytdlp = metadata.version("yt-dlp")
-        except metadata.PackageNotFoundError:
+        except (metadata.PackageNotFoundError, OSError, ValueError):
             installed_ytdlp = ""
-        if installed_ytdlp != YTDLP_VERSION or not self.command_works(
-            [sys.executable, "-m", "yt_dlp", "--ignore-config", "--version"]
-        ):
+        if installed_ytdlp != YTDLP_VERSION:
             issues.append("yt-dlp")
 
         try:
             installed_ejs = metadata.version("yt-dlp-ejs")
-        except metadata.PackageNotFoundError:
+        except (metadata.PackageNotFoundError, OSError, ValueError):
             installed_ejs = ""
         if installed_ejs != YTDLP_EJS_VERSION:
             issues.append("YouTube support")
 
-        for command, label, argument, prefix in (
-            ("ffmpeg", "FFmpeg", "-version", f"ffmpeg version {FFMPEG_VERSION}"),
-            ("ffprobe", "FFprobe", "-version", f"ffprobe version {FFMPEG_VERSION}"),
-            ("deno", "Deno", "--version", f"deno {DENO_VERSION}"),
+        for command, label in (
+            ("ffmpeg", "FFmpeg"),
+            ("ffprobe", "FFprobe"),
+            ("deno", "Deno"),
         ):
-            executable = local_runtime_executable(command)
-            if executable is None or not self.command_starts_with(
-                [executable, argument],
-                prefix,
-            ):
+            if local_runtime_executable(command) is None:
                 issues.append(label)
 
         self.component_issues = issues
@@ -1533,19 +1630,14 @@ class VideoDownloader(QMainWindow):
             self.start_download()
 
     def validate_download_folder(self):
-        folder = Path(self.download_folder).expanduser()
         try:
-            folder.mkdir(parents=True, exist_ok=True)
-            if not folder.is_dir():
-                raise OSError("The selected path is not a folder.")
-            with tempfile.NamedTemporaryFile(dir=folder):
-                pass
-        except OSError as error:
+            folder = prepare_download_folder(self.download_folder)
+        except (OSError, RuntimeError, ValueError) as error:
             self.status_label.setText("Choose another folder")
             self.append_log(f"Cannot save to that folder: {error}")
             return False
 
-        self.download_folder = str(folder.resolve())
+        self.download_folder = str(folder)
         self.path_label.setText(self.download_folder)
         self.save_preferences()
         return True
@@ -1557,8 +1649,7 @@ class VideoDownloader(QMainWindow):
             self.append_log("No URL entered.")
             return
 
-        parsed_url = urlparse(url)
-        if parsed_url.scheme.lower() not in {"http", "https"} or not parsed_url.netloc:
+        if not is_valid_download_url(url):
             self.status_label.setText("Invalid link")
             self.append_log("Enter a complete http:// or https:// link.")
             return
@@ -1700,9 +1791,12 @@ class VideoDownloader(QMainWindow):
     def kill_process_tree(process_id):
         if os.name != "nt" or not process_id:
             return
+        taskkill = system_taskkill_executable()
+        if taskkill is None:
+            return
         try:
             subprocess.run(
-                ["taskkill", "/PID", str(process_id), "/T", "/F"],
+                [str(taskkill), "/PID", str(process_id), "/T", "/F"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -1792,7 +1886,7 @@ class VideoDownloader(QMainWindow):
 
 
 def run_self_test(output_dir):
-    assert APP_VERSION == "1.0.6"
+    assert APP_VERSION == "1.0.7"
     output_dir = Path(output_dir).resolve()
     checks = []
 
@@ -1827,15 +1921,62 @@ def run_self_test(output_dir):
     assert metadata.version("yt-dlp-ejs") == YTDLP_EJS_VERSION
     checks.append("the pinned Python components match this release")
 
-    assert VideoDownloader.command_works(
-        [sys.executable, "-m", "yt_dlp", "--ignore-config", "--version"]
-    )
-    checks.append("yt-dlp starts with user configuration disabled")
+    class PreflightHarness:
+        runtime_storage_error = ""
+        components_ready = False
+        component_issues = []
+
+        class WidgetHarness:
+            def setEnabled(self, value):
+                raise AssertionError("healthy setup unexpectedly disabled downloads")
+
+            def setText(self, value):
+                raise AssertionError("healthy setup unexpectedly changed status")
+
+        download_button = WidgetHarness()
+        status_label = WidgetHarness()
+
+        def append_log(self, message):
+            raise AssertionError("healthy setup unexpectedly logged a repair error")
+
+    original_subprocess_run = subprocess.run
+
+    def reject_startup_subprocess(*args, **kwargs):
+        raise AssertionError("startup readiness scan launched a child process")
+
+    subprocess.run = reject_startup_subprocess
+    try:
+        preflight_harness = PreflightHarness()
+        VideoDownloader.preflight_components(preflight_harness)
+        assert preflight_harness.components_ready
+        assert preflight_harness.component_issues == []
+    finally:
+        subprocess.run = original_subprocess_run
+    checks.append("startup readiness scan uses only local metadata and paths")
+
+    private_version_args = yt_dlp_arguments("--version")
+    assert private_version_args == [
+        "-I",
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--no-plugin-dirs",
+        "--version",
+    ]
+    assert VideoDownloader.command_works([sys.executable, *private_version_args])
+    checks.append("yt-dlp starts isolated from user packages, plugins, and config")
 
     test_url = "https://example.invalid/watch?v=offline-test"
     mp4_args = build_download_arguments(test_url, output_dir, "MP4", "720p")
     mp3_args = build_download_arguments(test_url, output_dir, "MP3", "Best")
     assert 1 <= FRAGMENT_WORKERS <= 4
+    assert mp4_args[:5] == [
+        "-I",
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--no-plugin-dirs",
+    ]
     assert mp4_args[mp4_args.index("--concurrent-fragments") + 1] == str(
         FRAGMENT_WORKERS
     )
@@ -1848,6 +1989,99 @@ def run_self_test(output_dir):
     assert mp4_args[mp4_args.index("-S") + 1] == "res:720"
     assert mp3_args[mp3_args.index("--audio-format") + 1] == "mp3"
     checks.append("download commands are private, bounded, and format-specific")
+
+    assert is_valid_download_url("https://example.com/watch?v=1")
+    assert not is_valid_download_url("ftp://example.com/file")
+    assert not is_valid_download_url("http://[")
+    assert not is_valid_download_url("https://[::1")
+    checks.append("malformed and unsupported URLs are rejected without exceptions")
+
+    with tempfile.TemporaryDirectory(prefix="fleece-video-folder-test-") as test_root:
+        writable_folder = prepare_download_folder(Path(test_root) / "downloads")
+        assert writable_folder.is_dir() and writable_folder.is_absolute()
+        file_path = Path(test_root) / "not-a-folder"
+        file_path.write_text("test", encoding="utf-8")
+        try:
+            prepare_download_folder(file_path)
+        except OSError:
+            pass
+        else:
+            raise AssertionError("a file path was accepted as a download folder")
+    checks.append("download-folder preparation reports invalid paths safely")
+
+    if os.name == "nt":
+        taskkill_path = system_taskkill_executable()
+        assert taskkill_path is not None and taskkill_path.is_absolute()
+        assert taskkill_path.name.lower() == "taskkill.exe"
+        assert taskkill_path.parent.name.lower() == "system32"
+    checks.append("forced cancellation resolves taskkill from System32")
+
+    class SitesCoordinationHarness:
+        def __init__(self):
+            self.list_process = None
+            self.version_process = None
+            self.loaded = True
+            self.load_count = 0
+
+        def load_sites(self):
+            self.load_count += 1
+
+    sites_harness = SitesCoordinationHarness()
+    sites_harness.list_process = object()
+    SitesWindow.refresh(sites_harness)
+    assert sites_harness.load_count == 0
+    sites_harness.list_process = None
+    sites_harness.version_process = object()
+    SitesWindow.refresh(sites_harness)
+    assert sites_harness.load_count == 0
+    active_list_process = sites_harness.list_process = object()
+    SitesWindow.list_finished(sites_harness, object(), 0, None)
+    assert sites_harness.list_process is active_list_process
+    checks.append("supported-sites refresh and stale callbacks cannot overlap")
+
+    class SitesBufferProcess:
+        def __init__(self, stdout=b"", stderr=b""):
+            self.stdout = stdout
+            self.stderr = stderr
+            self.kill_count = 0
+
+        def readAllStandardOutput(self):
+            data, self.stdout = self.stdout, b""
+            return data
+
+        def readAllStandardError(self):
+            data, self.stderr = self.stderr, b""
+            return data
+
+        def kill(self):
+            self.kill_count += 1
+
+    class SitesBufferHarness:
+        def __init__(self, process):
+            self.list_process = process
+            self.output_buffer = bytearray()
+            self.error_buffer = bytearray()
+            self.output_truncated = False
+            self.error_truncated = False
+
+    stdout_process = SitesBufferProcess(
+        stdout=b"x" * (SITES_STDOUT_MAX_BYTES + 257)
+    )
+    stdout_harness = SitesBufferHarness(stdout_process)
+    SitesWindow.read_list_output(stdout_harness, stdout_process)
+    assert len(stdout_harness.output_buffer) == SITES_STDOUT_MAX_BYTES
+    assert stdout_harness.output_truncated
+    assert stdout_process.kill_count == 1
+
+    stderr_process = SitesBufferProcess(
+        stderr=b"x" * (SITES_STDERR_MAX_BYTES + 257)
+    )
+    stderr_harness = SitesBufferHarness(stderr_process)
+    SitesWindow.read_list_error(stderr_harness, stderr_process)
+    assert len(stderr_harness.error_buffer) == SITES_STDERR_MAX_BYTES
+    assert stderr_harness.error_truncated
+    assert stderr_process.kill_count == 1
+    checks.append("supported-sites child output is capped and oversized jobs stop")
 
     rejection = download_failure_message(
         [

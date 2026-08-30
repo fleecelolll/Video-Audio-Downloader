@@ -123,6 +123,8 @@ set "PIP_WHEEL_URL=https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778
 set "PIP_WHEEL_SHA256=71138ADF1F4CA900CDB7D289C21B7494329F2332B6D85F0E1C42108C0384ED3E"
 set "YTDLP_VERSION=2026.8.19"
 set "YTDLP_EJS_VERSION=0.8.0"
+set "YTDLP_EJS_CORE_SHA256=18DA6CE0758B416E7AE645084F4F8801F9F9D59D6C477C05EAA0FF94EBD8CC00"
+set "YTDLP_EJS_LIB_SHA256=C55987FE697E5B9EE18830163F7AF85327E9BB5C3E674B969D38C8D205EAA577"
 set "CERTIFI_VERSION=2026.7.22"
 set "CHARSET_NORMALIZER_VERSION=3.5.1"
 set "IDNA_VERSION=3.19"
@@ -943,6 +945,8 @@ if not defined APP_PY exit /b 1
 if not exist "%APP_PY%" exit /b 1
 "%APP_PY%" -I -c "import PySide6, yt_dlp, certifi, charset_normalizer, idna, mutagen, Cryptodome, requests, urllib3, websockets; from importlib.metadata import version; from PySide6.QtCore import qVersion; expected={'%PYSIDE_DISTRIBUTION%':'%PYSIDE_VERSION%','yt-dlp':'%YTDLP_VERSION%','yt-dlp-ejs':'%YTDLP_EJS_VERSION%','certifi':'%CERTIFI_VERSION%','charset-normalizer':'%CHARSET_NORMALIZER_VERSION%','idna':'%IDNA_VERSION%','mutagen':'%MUTAGEN_VERSION%','pycryptodomex':'%PYCRYPTODOMEX_VERSION%','requests':'%REQUESTS_VERSION%','urllib3':'%URLLIB3_VERSION%','websockets':'%WEBSOCKETS_VERSION%'}; assert all(version(name) == wanted for name, wanted in expected.items()); print('%PYSIDE_DISTRIBUTION%=' + version('%PYSIDE_DISTRIBUTION%')); print('Qt=' + qVersion()); print('yt-dlp=' + version('yt-dlp')); print('yt-dlp-ejs=' + version('yt-dlp-ejs'))" >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
+call :VerifyEjsAssets
+if errorlevel 1 exit /b 1
 if /I "%ARCH%"=="x64" (
     "%APP_PY%" -I -c "import brotli; from importlib.metadata import version; raise SystemExit(0 if version('Brotli') == '%BROTLI_VERSION%' else 1)" >>"%LOG%" 2>&1
     if errorlevel 1 exit /b 1
@@ -975,6 +979,12 @@ if not exist "%APP_PY%" exit /b 1
 "%APP_PY%" -I -c "from importlib.metadata import version; expected={'yt-dlp':'%YTDLP_VERSION%','yt-dlp-ejs':'%YTDLP_EJS_VERSION%','certifi':'%CERTIFI_VERSION%','charset-normalizer':'%CHARSET_NORMALIZER_VERSION%','idna':'%IDNA_VERSION%','mutagen':'%MUTAGEN_VERSION%','pycryptodomex':'%PYCRYPTODOMEX_VERSION%','requests':'%REQUESTS_VERSION%','urllib3':'%URLLIB3_VERSION%','websockets':'%WEBSOCKETS_VERSION%'}; raise SystemExit(0 if all(version(name) == wanted for name, wanted in expected.items()) else 1)" >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
 if /I "%ARCH%"=="x64" "%APP_PY%" -I -c "from importlib.metadata import version; raise SystemExit(0 if version('Brotli') == '%BROTLI_VERSION%' else 1)" >>"%LOG%" 2>&1
+exit /b %ERRORLEVEL%
+
+:VerifyEjsAssets
+if not defined APP_PY exit /b 1
+if not exist "%APP_PY%" exit /b 1
+"%APP_PY%" -I -c "import hashlib, stat, yt_dlp_ejs; from pathlib import Path; root=Path(yt_dlp_ejs.__file__).resolve(strict=True).parent; expected={Path('yt/solver/core.min.js'):'%YTDLP_EJS_CORE_SHA256%',Path('yt/solver/lib.min.js'):'%YTDLP_EJS_LIB_SHA256%'}; assets=[(root/relative,wanted) for relative,wanted in expected.items()]; assert all(stat.S_ISREG(path.stat(follow_symlinks=False).st_mode) and not path.is_symlink() and hashlib.sha256(path.read_bytes()).hexdigest().upper() == wanted for path,wanted in assets)" >>"%LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
 :ValidateFfmpeg
@@ -1095,7 +1105,7 @@ exit /b 0
 :ValidatePrivateTree
 if "%~1"=="" exit /b 1
 set "VALIDATE_TREE=%~1"
-"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';$project=[IO.Path]::GetFullPath($env:ROOT).TrimEnd('\');$root=[IO.Path]::GetFullPath($env:VALIDATE_TREE).TrimEnd('\');if(-not $root.StartsWith($project+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Private tree escaped the project root.'};$stack=New-Object 'System.Collections.Generic.Stack[string]';$stack.Push($root);while($stack.Count -gt 0){$directory=Get-Item -LiteralPath $stack.Pop() -Force;if(-not $directory.PSIsContainer-or($directory.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'Unsafe private directory.'};foreach($entryPath in [IO.Directory]::EnumerateFileSystemEntries($directory.FullName)){$entry=Get-Item -LiteralPath $entryPath -Force;if($entry.Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Unsafe private reparse point.'};if($entry.PSIsContainer){$stack.Push($entry.FullName)}}};exit 0" >>"%DIAGNOSTIC_LOG%" 2>&1
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';$project=[IO.Path]::GetFullPath($env:ROOT).TrimEnd('\');$root=[IO.Path]::GetFullPath($env:VALIDATE_TREE).TrimEnd('\');if(-not $root.StartsWith($project+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Private tree escaped the project root.'};$extended=if($root.StartsWith('\\')){'\\?\UNC\'+$root.Substring(2)}else{'\\?\'+$root};$stack=New-Object 'System.Collections.Generic.Stack[string]';$stack.Push($extended);while($stack.Count -gt 0){$directory=$stack.Pop();$attributes=[IO.File]::GetAttributes($directory);if(-not($attributes-band[IO.FileAttributes]::Directory)-or($attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'Unsafe private directory.'};foreach($entryPath in [IO.Directory]::EnumerateFileSystemEntries($directory)){$entryAttributes=[IO.File]::GetAttributes($entryPath);if($entryAttributes-band[IO.FileAttributes]::ReparsePoint){throw 'Unsafe private reparse point.'};if($entryAttributes-band[IO.FileAttributes]::Directory){$stack.Push($entryPath)}}};exit 0" >>"%DIAGNOSTIC_LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
 :ReplaceDirectory

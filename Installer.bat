@@ -123,6 +123,17 @@ set "PIP_WHEEL_URL=https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778
 set "PIP_WHEEL_SHA256=71138ADF1F4CA900CDB7D289C21B7494329F2332B6D85F0E1C42108C0384ED3E"
 set "YTDLP_VERSION=2026.8.19"
 set "YTDLP_EJS_VERSION=0.8.0"
+set "CERTIFI_VERSION=2026.7.22"
+set "CHARSET_NORMALIZER_VERSION=3.5.1"
+set "IDNA_VERSION=3.19"
+set "MUTAGEN_VERSION=1.48.1"
+set "PYCRYPTODOMEX_VERSION=3.23.0"
+set "REQUESTS_VERSION=2.34.2"
+set "URLLIB3_VERSION=2.7.0"
+set "WEBSOCKETS_VERSION=17.0.1"
+set "BROTLI_VERSION=1.2.0"
+set YTDLP_RUNTIME_PACKAGES="certifi==%CERTIFI_VERSION%" "charset-normalizer==%CHARSET_NORMALIZER_VERSION%" "idna==%IDNA_VERSION%" "mutagen==%MUTAGEN_VERSION%" "pycryptodomex==%PYCRYPTODOMEX_VERSION%" "requests==%REQUESTS_VERSION%" "urllib3==%URLLIB3_VERSION%" "websockets==%WEBSOCKETS_VERSION%"
+set "YTDLP_ARCH_PACKAGE="
 set "FFMPEG_VERSION=9.0.1"
 set "DENO_VERSION=2.9.5"
 set "FFMPEG_URL=https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-essentials_build.zip"
@@ -137,6 +148,7 @@ goto Failed
 
 :ArchitectureX64
 set "ARCH=x64"
+set YTDLP_ARCH_PACKAGE="Brotli==%BROTLI_VERSION%"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip"
 set "PYTHON_SHA256=D297E5FF019966817AD8502465176139F2D3D840FA4ED84B13BED399A6AB1F15"
 set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-pc-windows-msvc.zip"
@@ -854,7 +866,7 @@ if errorlevel 1 exit /b 1
 :InstallPinnedVenvPackage
 set "LOG_MESSAGE=Installing pinned app packages from official PyPI."
 call :LogCurrent
-"%APP_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp[default]==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" >>"%LOG%" 2>&1
+"%APP_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" %YTDLP_RUNTIME_PACKAGES% %YTDLP_ARCH_PACKAGE% >>"%LOG%" 2>&1
 set "PACKAGE_INSTALL_CODE=%ERRORLEVEL%"
 goto CheckInstalledPackages
 
@@ -894,7 +906,7 @@ call :RemoveDirectoryRobust "%LOCAL_SITE%"
 if errorlevel 1 exit /b 1
 mkdir "%LOCAL_SITE%" >>"%LOG%" 2>&1
 if not exist "%LOCAL_SITE%" exit /b 1
-"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp[default]==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" %YTDLP_RUNTIME_PACKAGES% %YTDLP_ARCH_PACKAGE% >>"%LOG%" 2>&1
 set "PACKAGE_INSTALL_CODE=%ERRORLEVEL%"
 
 :CheckInstalledPackages
@@ -911,7 +923,7 @@ if /I "%ENV_MODE%"=="embedded" goto RepairEmbeddedPackages
 exit /b 1
 
 :RepairVenvPackages
-"%APP_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --force-reinstall --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp[default]==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" >>"%LOG%" 2>&1
+"%APP_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --force-reinstall --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" %YTDLP_RUNTIME_PACKAGES% %YTDLP_ARCH_PACKAGE% >>"%LOG%" 2>&1
 goto RepairPackagesFinished
 
 :RepairEmbeddedPackages
@@ -919,7 +931,7 @@ call :RemoveDirectoryRobust "%LOCAL_SITE%"
 if errorlevel 1 exit /b 1
 mkdir "%LOCAL_SITE%" >>"%LOG%" 2>&1
 if not exist "%LOCAL_SITE%" exit /b 1
-"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --force-reinstall --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp[default]==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --force-reinstall --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" %YTDLP_RUNTIME_PACKAGES% %YTDLP_ARCH_PACKAGE% >>"%LOG%" 2>&1
 
 :RepairPackagesFinished
 if errorlevel 1 exit /b 1
@@ -929,8 +941,12 @@ exit /b %ERRORLEVEL%
 :VerifyPythonPackages
 if not defined APP_PY exit /b 1
 if not exist "%APP_PY%" exit /b 1
-"%APP_PY%" -I -c "import PySide6, yt_dlp; from importlib.metadata import version; from PySide6.QtCore import qVersion; assert version('%PYSIDE_DISTRIBUTION%') == '%PYSIDE_VERSION%'; assert version('yt-dlp') == '%YTDLP_VERSION%'; assert version('yt-dlp-ejs') == '%YTDLP_EJS_VERSION%'; print('%PYSIDE_DISTRIBUTION%=' + version('%PYSIDE_DISTRIBUTION%')); print('Qt=' + qVersion()); print('yt-dlp=' + version('yt-dlp')); print('yt-dlp-ejs=' + version('yt-dlp-ejs'))" >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import PySide6, yt_dlp, certifi, charset_normalizer, idna, mutagen, Cryptodome, requests, urllib3, websockets; from importlib.metadata import version; from PySide6.QtCore import qVersion; expected={'%PYSIDE_DISTRIBUTION%':'%PYSIDE_VERSION%','yt-dlp':'%YTDLP_VERSION%','yt-dlp-ejs':'%YTDLP_EJS_VERSION%','certifi':'%CERTIFI_VERSION%','charset-normalizer':'%CHARSET_NORMALIZER_VERSION%','idna':'%IDNA_VERSION%','mutagen':'%MUTAGEN_VERSION%','pycryptodomex':'%PYCRYPTODOMEX_VERSION%','requests':'%REQUESTS_VERSION%','urllib3':'%URLLIB3_VERSION%','websockets':'%WEBSOCKETS_VERSION%'}; assert all(version(name) == wanted for name, wanted in expected.items()); print('%PYSIDE_DISTRIBUTION%=' + version('%PYSIDE_DISTRIBUTION%')); print('Qt=' + qVersion()); print('yt-dlp=' + version('yt-dlp')); print('yt-dlp-ejs=' + version('yt-dlp-ejs'))" >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
+if /I "%ARCH%"=="x64" (
+    "%APP_PY%" -I -c "import brotli; from importlib.metadata import version; raise SystemExit(0 if version('Brotli') == '%BROTLI_VERSION%' else 1)" >>"%LOG%" 2>&1
+    if errorlevel 1 exit /b 1
+)
 if /I "%ENV_MODE%"=="venv" goto CheckVenvDependencies
 if /I "%ENV_MODE%"=="embedded" goto CheckEmbeddedDependencies
 exit /b 1
@@ -956,7 +972,9 @@ exit /b %ERRORLEVEL%
 :HasPinnedDownloaderPackages
 if not defined APP_PY exit /b 1
 if not exist "%APP_PY%" exit /b 1
-"%APP_PY%" -I -c "from importlib.metadata import version; raise SystemExit(0 if version('yt-dlp') == '%YTDLP_VERSION%' and version('yt-dlp-ejs') == '%YTDLP_EJS_VERSION%' else 1)" >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "from importlib.metadata import version; expected={'yt-dlp':'%YTDLP_VERSION%','yt-dlp-ejs':'%YTDLP_EJS_VERSION%','certifi':'%CERTIFI_VERSION%','charset-normalizer':'%CHARSET_NORMALIZER_VERSION%','idna':'%IDNA_VERSION%','mutagen':'%MUTAGEN_VERSION%','pycryptodomex':'%PYCRYPTODOMEX_VERSION%','requests':'%REQUESTS_VERSION%','urllib3':'%URLLIB3_VERSION%','websockets':'%WEBSOCKETS_VERSION%'}; raise SystemExit(0 if all(version(name) == wanted for name, wanted in expected.items()) else 1)" >>"%LOG%" 2>&1
+if errorlevel 1 exit /b 1
+if /I "%ARCH%"=="x64" "%APP_PY%" -I -c "from importlib.metadata import version; raise SystemExit(0 if version('Brotli') == '%BROTLI_VERSION%' else 1)" >>"%LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
 :ValidateFfmpeg

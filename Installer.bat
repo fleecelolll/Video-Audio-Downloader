@@ -103,12 +103,12 @@ set "MUTAGEN_VERSION=1.48.1"
 set "PYCRYPTODOMEX_VERSION=3.23.0"
 set "REQUESTS_VERSION=2.34.2"
 set "URLLIB3_VERSION=2.7.0"
-set "WEBSOCKETS_VERSION=17.0.1"
+set "WEBSOCKETS_VERSION=17.1"
 set "BROTLI_VERSION=1.2.0"
 set YTDLP_RUNTIME_PACKAGES="certifi==%CERTIFI_VERSION%" "charset-normalizer==%CHARSET_NORMALIZER_VERSION%" "idna==%IDNA_VERSION%" "mutagen==%MUTAGEN_VERSION%" "pycryptodomex==%PYCRYPTODOMEX_VERSION%" "requests==%REQUESTS_VERSION%" "urllib3==%URLLIB3_VERSION%" "websockets==%WEBSOCKETS_VERSION%"
 set "YTDLP_ARCH_PACKAGE="
 set "FFMPEG_VERSION=9.0.1"
-set "DENO_VERSION=2.9.5"
+set "DENO_VERSION=2.9.6"
 set "FFMPEG_URL=https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-essentials_build.zip"
 set "FFMPEG_SHA256=FEC81AE03971D9DD4BE3EBE02E263BD2EC1D789483F931BDBA5F5715E65DA2E9"
 
@@ -124,16 +124,16 @@ set "ARCH=x64"
 set YTDLP_ARCH_PACKAGE="Brotli==%BROTLI_VERSION%"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip"
 set "PYTHON_SHA256=D297E5FF019966817AD8502465176139F2D3D840FA4ED84B13BED399A6AB1F15"
-set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-pc-windows-msvc.zip"
-set "DENO_SHA256=171EFAB55AC6B9881FD53EE4C20F8BF3BB1340FFC618483746909014DB12216A"
+set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.6/deno-x86_64-pc-windows-msvc.zip"
+set "DENO_SHA256=15E5300B0BA3C3695A7621D90160A746EC9E710228CEE639AFA9D580F6E3CD11"
 goto ArchitectureReady
 
 :ArchitectureArm64
 set "ARCH=arm64"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-arm64.zip"
 set "PYTHON_SHA256=F6773983C8959D4281E48C4540CB0BDD23E42391E4E951CE17E7CEB52658F21C"
-set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-pc-windows-msvc.zip"
-set "DENO_SHA256=73F20B3566A0A6E3F6912FD7BF5B3A7CCD04D68414BAEDEA3B397437BDEC6472"
+set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.6/deno-aarch64-pc-windows-msvc.zip"
+set "DENO_SHA256=ACB014AFE2299847764E232B4993E162E3946CDEEC36603E3F1A0B548CD1EA55"
 
 :ArchitectureReady
 if not exist "%POWERSHELL_EXE%" (
@@ -499,7 +499,7 @@ exit /b %ERRORLEVEL%
 exit /b %ERRORLEVEL%
 
 :ValidatePrivatePaths
-"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';$root=[IO.Path]::GetFullPath($env:ROOT).TrimEnd('\');$volume=[IO.Path]::GetPathRoot($root).TrimEnd('\');if([string]::IsNullOrWhiteSpace($root)-or $root -ieq $volume){throw 'Unsafe project root.'};$rootItem=Get-Item -LiteralPath $root -Force;if(-not $rootItem.PSIsContainer-or($rootItem.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'The project root must be a normal directory.'};$targets=@($env:RUNTIME,$env:VENV,$env:DOWNLOADS,$env:PYTHON_DIR,(Join-Path $env:PYTHON_DIR 'Lib'),$env:LOCAL_SITE,$env:SETUP_LOCK,($env:PYTHON_DIR+'.new'),($env:PYTHON_DIR+'.old'),($env:VENV+'.old'),(Join-Path $env:RUNTIME 'environment-before-package-repair'),(Join-Path $env:RUNTIME 'environment-before-package-repair.new'),(Join-Path $env:RUNTIME 'environment-before-package-repair.old'),(Join-Path $env:RUNTIME 'setup-check'));foreach($name in @('FFMPEG_DIR','DENO_DIR','HERCULES_DIR','LUA_DIR')){$value=[Environment]::GetEnvironmentVariable($name);if($value){$targets+=@($value,($value+'.new'),($value+'.old'),($value+'.extract'))}};$prefix=$root+'\';foreach($target in $targets){if([string]::IsNullOrWhiteSpace($target)){throw 'A private setup path is empty.'};$full=[IO.Path]::GetFullPath($target).TrimEnd('\');if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'A private setup path escaped the project root.'};if(Test-Path -LiteralPath $full){$item=Get-Item -LiteralPath $full -Force;if(-not $item.PSIsContainer-or($item.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'A private setup directory is unsafe.'}}};foreach($file in @($env:LOG,$env:SETUP_MARKER,($env:SETUP_MARKER+'.new'),$env:SETUP_LOCK_OWNER,($env:SETUP_LOCK_OWNER+'.new'),$env:PIP_WHEEL)){if([string]::IsNullOrWhiteSpace($file)){continue};$full=[IO.Path]::GetFullPath($file);if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'A private setup file escaped the project root.'};if(Test-Path -LiteralPath $full){$item=Get-Item -LiteralPath $full -Force;if($item.PSIsContainer-or($item.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'A private setup file is unsafe.'}}};exit 0" >nul 2>nul
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';$root=[IO.Path]::GetFullPath($env:ROOT).TrimEnd('\');$volume=[IO.Path]::GetPathRoot($root).TrimEnd('\');if([string]::IsNullOrWhiteSpace($root)-or $root -ieq $volume){throw 'Unsafe project root.'};$rootItem=Get-Item -LiteralPath $root -Force;if(-not $rootItem.PSIsContainer-or($rootItem.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'The project root must be a normal directory.'};$targets=@($env:RUNTIME,$env:VENV,$env:DOWNLOADS,$env:PYTHON_DIR,(Join-Path $env:PYTHON_DIR 'Lib'),$env:LOCAL_SITE,$env:SETUP_LOCK,($env:PYTHON_DIR+'.new'),($env:PYTHON_DIR+'.old'),($env:VENV+'.old'),(Join-Path $env:RUNTIME 'b'),(Join-Path $env:RUNTIME 'b.new'),(Join-Path $env:RUNTIME 'b.old'),(Join-Path $env:RUNTIME 'setup-check'));foreach($name in @('FFMPEG_DIR','DENO_DIR','HERCULES_DIR','LUA_DIR')){$value=[Environment]::GetEnvironmentVariable($name);if($value){$targets+=@($value,($value+'.new'),($value+'.old'),($value+'.extract'))}};$prefix=$root+'\';foreach($target in $targets){if([string]::IsNullOrWhiteSpace($target)){throw 'A private setup path is empty.'};$full=[IO.Path]::GetFullPath($target).TrimEnd('\');if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'A private setup path escaped the project root.'};if(Test-Path -LiteralPath $full){$item=Get-Item -LiteralPath $full -Force;if(-not $item.PSIsContainer-or($item.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'A private setup directory is unsafe.'}}};foreach($file in @($env:LOG,$env:SETUP_MARKER,($env:SETUP_MARKER+'.new'),$env:SETUP_LOCK_OWNER,($env:SETUP_LOCK_OWNER+'.new'),$env:PIP_WHEEL)){if([string]::IsNullOrWhiteSpace($file)){continue};$full=[IO.Path]::GetFullPath($file);if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'A private setup file escaped the project root.'};if(Test-Path -LiteralPath $full){$item=Get-Item -LiteralPath $full -Force;if($item.PSIsContainer-or($item.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'A private setup file is unsafe.'}}};exit 0" >nul 2>nul
 exit /b %ERRORLEVEL%
 
 :WriteSetupMarker
@@ -722,7 +722,7 @@ call :VerifyPythonPackages
 exit /b %ERRORLEVEL%
 
 :BeginPackageTransaction
-set "PACKAGE_BACKUP=%RUNTIME%\environment-before-package-repair"
+set "PACKAGE_BACKUP=%RUNTIME%\b"
 set "PACKAGE_BACKUP_NEW=%PACKAGE_BACKUP%.new"
 set "PACKAGE_BACKUP_MARKER=%PACKAGE_BACKUP%.complete"
 set "PACKAGE_TARGET="

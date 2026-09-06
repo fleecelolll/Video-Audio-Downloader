@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 APP_NAME = "Video + Audio Downloader"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 PYSIDE_VERSION = "6.11.2"
 YTDLP_VERSION = "2026.8.19"
 YTDLP_EJS_VERSION = "0.8.0"
@@ -1886,7 +1886,7 @@ class VideoDownloader(QMainWindow):
 
 
 def run_self_test(output_dir):
-    assert APP_VERSION == "1.0.7"
+    assert APP_VERSION == "1.0.8"
     output_dir = Path(output_dir).resolve()
     checks = []
 

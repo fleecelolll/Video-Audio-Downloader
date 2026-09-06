@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 APP_NAME = "Video + Audio Downloader"
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 PYSIDE_VERSION = "6.11.2"
 YTDLP_VERSION = "2026.8.19"
 YTDLP_EJS_VERSION = "0.8.0"
@@ -590,7 +590,7 @@ class AnimatedDropdown(QWidget):
         layout.addWidget(self.button)
 
         self.popup = QFrame(
-            None,
+            self,
             Qt.Tool | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint,
         )
         self.popup.setObjectName("dropdownPopup")
@@ -649,12 +649,18 @@ class AnimatedDropdown(QWidget):
         else:
             final_y = below_y
 
-        end_rect = QRect(
-            button_top_left.x(),
-            final_y,
-            popup_width,
-            popup_height,
-        )
+        final_x = button_top_left.x()
+        if available:
+            final_x = max(
+                available.left(),
+                min(final_x, available.right() - popup_width + 1),
+            )
+            final_y = max(
+                available.top(),
+                min(final_y, available.bottom() - popup_height + 1),
+            )
+
+        end_rect = QRect(final_x, final_y, popup_width, popup_height)
         QApplication.instance().installEventFilter(self)
 
         self.popup.setGeometry(end_rect)
@@ -913,11 +919,12 @@ class SitesWindow(QWidget):
         if self.version_process is not process:
             return
         version = ""
-        if exit_code == 0:
+        if exit_status == QProcess.NormalExit and exit_code == 0:
             version = bytes(process.readAllStandardOutput()).decode(
                 "utf-8", errors="replace"
             ).strip()
         self.version_process = None
+        process.deleteLater()
 
         if version:
             self.note_label.setText(
@@ -928,6 +935,7 @@ class SitesWindow(QWidget):
     def version_error(self, process, error):
         if self.version_process is process and error == QProcess.FailedToStart:
             self.version_process = None
+            process.deleteLater()
 
     def list_finished(self, process, exit_code, exit_status):
         if self.list_process is not process:
@@ -936,8 +944,14 @@ class SitesWindow(QWidget):
         self.read_list_error(process)
         self.list_process = None
         self.loaded = True
+        process.deleteLater()
 
-        if exit_code != 0 or self.output_truncated or self.error_truncated:
+        if (
+            exit_status != QProcess.NormalExit
+            or exit_code != 0
+            or self.output_truncated
+            or self.error_truncated
+        ):
             self.show_list_failure()
             return
 
@@ -968,6 +982,7 @@ class SitesWindow(QWidget):
         if error == QProcess.FailedToStart:
             self.list_process = None
             self.loaded = True
+            process.deleteLater()
             self.show_list_failure()
 
     def apply_filter(self, text):
@@ -988,12 +1003,19 @@ class SitesWindow(QWidget):
             self.count_label.setText(f"{total} sites")
 
     def closeEvent(self, event: QCloseEvent):
-        for process in (self.version_process, self.list_process):
+        processes = (self.version_process, self.list_process)
+        self.version_process = None
+        self.list_process = None
+        if any(process is not None for process in processes):
+            self.loaded = False
+        for process in processes:
             if process and process.state() != QProcess.NotRunning:
                 process.terminate()
                 if not process.waitForFinished(400):
                     process.kill()
                     process.waitForFinished(400)
+            if process:
+                process.deleteLater()
         event.accept()
 
 
@@ -1817,6 +1839,7 @@ class VideoDownloader(QMainWindow):
 
     def process_finished(self, exit_code, exit_status):
         self.flush_process_output()
+        finished_process = self.process
         was_cancelled = self.cancel_requested
         process_id = self.process_pid
         self.stop_timer.stop()
@@ -1830,7 +1853,7 @@ class VideoDownloader(QMainWindow):
 
         if was_cancelled:
             self.status_label.setText("Cancelled")
-        elif exit_code == 0:
+        elif exit_status == QProcess.NormalExit and exit_code == 0:
             self.progress_bar.setValue(100)
             self.status_label.setText("Done")
         else:
@@ -1838,6 +1861,8 @@ class VideoDownloader(QMainWindow):
             self.append_failure_summary(exit_code)
 
         self.process = None
+        if finished_process is not None:
+            finished_process.deleteLater()
         self.process_pid = 0
         self.cancel_requested = False
         self.process_decoder = None
@@ -1847,7 +1872,8 @@ class VideoDownloader(QMainWindow):
         self.append_log(f"{message} (code {exit_code})")
 
     def process_error(self, error):
-        error_text = self.process.errorString() if self.process else str(error)
+        failed_process = self.process
+        error_text = failed_process.errorString() if failed_process else str(error)
         if error == QProcess.FailedToStart:
             self.append_log(f"Could not start the downloader: {error_text}")
             self.running = False
@@ -1856,6 +1882,8 @@ class VideoDownloader(QMainWindow):
             self.set_controls_enabled(True)
             self.status_label.setText("Failed")
             self.process = None
+            if failed_process is not None:
+                failed_process.deleteLater()
             self.process_pid = 0
             self.cancel_requested = False
             self.process_decoder = None
@@ -1867,6 +1895,8 @@ class VideoDownloader(QMainWindow):
             self.append_log(f"Downloader process error: {error_text}")
 
     def closeEvent(self, event: QCloseEvent):
+        self.format_dropdown.hide_popup()
+        self.quality_dropdown.hide_popup()
         self.save_preferences()
         if self.sites_window is not None:
             self.sites_window.close()
@@ -1886,7 +1916,7 @@ class VideoDownloader(QMainWindow):
 
 
 def run_self_test(output_dir):
-    assert APP_VERSION == "1.0.10"
+    assert APP_VERSION == "1.0.11"
     output_dir = Path(output_dir).resolve()
     checks = []
 
@@ -2037,7 +2067,51 @@ def run_self_test(output_dir):
     active_list_process = sites_harness.list_process = object()
     SitesWindow.list_finished(sites_harness, object(), 0, None)
     assert sites_harness.list_process is active_list_process
-    checks.append("supported-sites refresh and stale callbacks cannot overlap")
+
+    sites_close_calls = []
+
+    class SitesCloseProcess:
+        def state(self):
+            return QProcess.Running
+
+        def terminate(self):
+            sites_close_calls.append("terminate")
+
+        def waitForFinished(self, timeout):
+            sites_close_calls.append(("wait", timeout))
+            return False
+
+        def kill(self):
+            sites_close_calls.append("kill")
+
+        def deleteLater(self):
+            sites_close_calls.append("delete")
+
+    class SitesCloseHarness:
+        version_process = SitesCloseProcess()
+        list_process = SitesCloseProcess()
+        loaded = True
+
+    sites_close_harness = SitesCloseHarness()
+    sites_close_event = QCloseEvent()
+    SitesWindow.closeEvent(sites_close_harness, sites_close_event)
+    assert sites_close_event.isAccepted()
+    assert sites_close_harness.version_process is None
+    assert sites_close_harness.list_process is None
+    assert not sites_close_harness.loaded
+    assert sites_close_calls.count("terminate") == 2
+    assert sites_close_calls.count("kill") == 2
+    assert sites_close_calls.count("delete") == 2
+
+    class LoadedSitesCloseHarness:
+        version_process = None
+        list_process = None
+        loaded = True
+
+    loaded_sites_harness = LoadedSitesCloseHarness()
+    SitesWindow.closeEvent(loaded_sites_harness, QCloseEvent())
+    assert loaded_sites_harness.loaded
+    checks.append("supported-sites jobs close cleanly and stale callbacks cannot overlap")
 
     class SitesBufferProcess:
         def __init__(self, stdout=b"", stderr=b""):

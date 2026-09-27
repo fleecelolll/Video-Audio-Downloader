@@ -10,6 +10,7 @@ set "SETUP_CHILD=0"
 set "LOG_READY="
 set "DIAGNOSTIC_LOG=nul"
 set "PATHS_VALIDATED="
+set "REPAIR_HINT="
 set "FFMPEG_DIR="
 set "DENO_DIR="
 set "HERCULES_DIR="
@@ -135,19 +136,23 @@ set "DENO_SHA256=C4C4AC8BFDAA37814BDA5C05FC9CDF2154904E2EF8277673A30BDCEAAA64980
 :ArchitectureReady
 if not exist "%POWERSHELL_EXE%" (
     set "FAIL_MESSAGE=Trusted Windows PowerShell is missing from the system folder."
+    set "REPAIR_HINT=Repair Windows system components, then retry from a fresh official ZIP."
     goto Failed
 )
 if not exist "%ROBOCOPY_EXE%" (
     set "FAIL_MESSAGE=Trusted Windows file-copy support is missing from the system folder."
+    set "REPAIR_HINT=Repair Windows system components, then retry from a fresh official ZIP."
     goto Failed
 )
 if not exist "%ROOT%LICENSE" (
     set "FAIL_MESSAGE=The bundled Tool License is missing from this folder. Extract a fresh official release and try again."
+    set "REPAIR_HINT=Re-extract the complete official ZIP, including LICENSE, then run Installer.bat again."
     goto Failed
 )
 "%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "if([IO.Path]::GetFullPath($env:ROOT).Length -gt [int]$env:MAX_ROOT_LENGTH){exit 2}" >nul 2>nul
 if errorlevel 1 (
     set "FAIL_MESSAGE=The complete app folder path must be 72 characters or fewer. Move the extracted folder closer to the drive root and try again."
+    set "REPAIR_HINT=Move the complete folder to a short path such as C:\Tools\VideoDownloader, then retry."
     goto Failed
 )
 cls
@@ -182,12 +187,14 @@ if "%ASSUME_YES%"=="1" (
 call :ValidatePrivatePaths
 if errorlevel 1 (
     set "FAIL_MESSAGE=The app folder or one of its private setup paths is not safe to modify. Extract a fresh copy to a normal folder and try again."
+    set "REPAIR_HINT=Re-extract to a normal local folder without links or junctions, then retry."
     goto Failed
 )
 set "PATHS_VALIDATED=1"
 call :CheckRootWritePermission
 if errorlevel 1 (
     set "FAIL_MESSAGE=Setup cannot write to this app folder. Move it to a folder owned by this Windows user and try again."
+    set "REPAIR_HINT=Move the extracted folder to a location you can write to, then retry without administrator rights."
     goto Failed
 )
 if not exist "%RUNTIME%" mkdir "%RUNTIME%" >nul 2>nul
@@ -233,8 +240,30 @@ call :LogCurrent
 
 if not exist "%APP_FILE%" (
     set "FAIL_MESSAGE=Video + Audio Downloader.pyw is missing from this folder."
+    set "REPAIR_HINT=Re-extract the complete official ZIP, including the app source file, then run Installer.bat again."
     goto Failed
 )
+echo.
+echo   [ PRE-DOWNLOAD CHECKS ]   App files and Windows setup support
+call :CheckBundledSource
+if errorlevel 1 (
+    set "FAIL_MESSAGE=The bundled app source is empty, unreadable, or unsafe."
+    set "REPAIR_HINT=Re-extract the complete official ZIP to a normal folder, then run Installer.bat again."
+    goto Failed
+)
+call :CheckArchiveSupport
+if errorlevel 1 (
+    set "FAIL_MESSAGE=Windows PowerShell cannot extract ZIP archives in this session."
+    set "REPAIR_HINT=Repair Windows PowerShell or its Microsoft.PowerShell.Archive module, then run Installer.bat again."
+    goto Failed
+)
+call :CheckShortcutSupport
+if errorlevel 1 (
+    set "FAIL_MESSAGE=Windows could not create or read back a folder-local start shortcut."
+    set "REPAIR_HINT=Remove a broken shortcut after saving it elsewhere, or repair Windows shortcut support, then retry."
+    goto Failed
+)
+echo      Bundled source, ZIP extraction, and shortcut support passed.
 
 echo.
 echo   [ STEP 1 / 3 ]   Private Python environment
@@ -268,6 +297,7 @@ echo      Downloading and preparing private Python...
 call :InstallEmbedPy
 if errorlevel 1 (
     set "FAIL_MESSAGE=Private Python could not be installed or verified."
+    set "REPAIR_HINT=Check free disk space and access to python.org and files.pythonhosted.org; inspect setup.log, then retry."
     goto Failed
 )
 if exist "%VENV%" call :RemoveDirectoryRobust "%VENV%"
@@ -300,6 +330,7 @@ if errorlevel 1 (
 call :InstallPythonPackages
 if errorlevel 1 (
     set "FAIL_MESSAGE=PySide6, yt-dlp, or yt-dlp-ejs could not be installed and verified."
+    set "REPAIR_HINT=Check access to pypi.org and files.pythonhosted.org; inspect setup.log for the failed package, then retry."
     goto Failed
 )
 call :TouchSetupLock
@@ -328,6 +359,7 @@ echo      Downloading the verified local media tools...
 call :InstallFfmpeg
 if errorlevel 1 (
     set "FAIL_MESSAGE=FFmpeg or FFprobe could not be installed and verified."
+    set "REPAIR_HINT=Check access to github.com, free disk space, and setup.log; then retry with a fresh official ZIP."
     goto Failed
 )
 :FfmpegReady
@@ -352,6 +384,7 @@ echo      Downloading the verified local YouTube runtime...
 call :InstallDeno
 if errorlevel 1 (
     set "FAIL_MESSAGE=Deno could not be installed and verified."
+    set "REPAIR_HINT=Check access to github.com, free disk space, and setup.log; then retry with a fresh official ZIP."
     goto Failed
 )
 :DenoReady
@@ -374,12 +407,14 @@ if errorlevel 1 (
 call :VerifyEverything
 if errorlevel 1 (
     set "FAIL_MESSAGE=One or more final component checks failed."
+    set "REPAIR_HINT=Read the last error in setup.log, then rerun Installer.bat to repair the specific component."
     goto Failed
 )
 echo      Creating the Video + Audio Downloader start shortcut...
 call :CreateShortcut
 if errorlevel 1 (
     set "FAIL_MESSAGE=The start shortcut could not be created."
+    set "REPAIR_HINT=Close the app and any open shortcut properties window, check folder write access, then retry."
     goto Failed
 )
 call :WriteSetupMarker
@@ -453,6 +488,11 @@ echo  ==================================================
 echo.
 echo   %FAIL_MESSAGE%
 echo.
+if defined REPAIR_HINT (
+    echo   How to fix:
+    echo   %REPAIR_HINT%
+    echo.
+)
 echo   No success was reported because all checks did not pass.
 if defined LOG_READY (
     echo   The detailed log is here:
@@ -497,6 +537,18 @@ exit /b 1
 
 :EnsureAppClosed
 "%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "foreach($name in @('Global\FleeceVideoDownloaderApp','Local\FleeceVideoDownloaderApp')){try{$mutex=[Threading.Mutex]::OpenExisting($name);$mutex.Dispose();exit 1}catch [Threading.WaitHandleCannotBeOpenedException]{}catch{exit 1}};exit 0" >>"%LOG%" 2>&1
+exit /b %ERRORLEVEL%
+
+:CheckBundledSource
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';$item=Get-Item -LiteralPath $env:APP_FILE -Force;if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -lt 1 -or $item.Length -gt 4MB){throw 'Bundled app source is not a normal bounded file.'};$text=[Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes($item.FullName));if([string]::IsNullOrWhiteSpace($text)){throw 'Bundled app source is empty.'};Write-Output 'Bundled app source passed preflight.'" >>"%LOG%" 2>&1
+exit /b %ERRORLEVEL%
+
+:CheckArchiveSupport
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';$cmd=Get-Command Expand-Archive -ErrorAction Stop;if($cmd.CommandType -ne 'Function' -and $cmd.CommandType -ne 'Cmdlet'){throw 'Expand-Archive is unavailable.'};$probe=Join-Path $env:RUNTIME ('archive-preflight-'+[Guid]::NewGuid().ToString('N'));$archive=$probe+'.zip';$source=$probe+'.txt';$out=$probe+'.out';try{[IO.File]::WriteAllText($source,'ok');Compress-Archive -LiteralPath $source -DestinationPath $archive -ErrorAction Stop;Expand-Archive -LiteralPath $archive -DestinationPath $out -ErrorAction Stop;if(-not(Test-Path -LiteralPath (Join-Path $out ([IO.Path]::GetFileName($source))) -PathType Leaf)){throw 'Windows could not extract a test ZIP.'}}finally{foreach($file in @($source,$archive)){if(Test-Path -LiteralPath $file){Remove-Item -LiteralPath $file -Force}};if(Test-Path -LiteralPath $out){Remove-Item -LiteralPath $out -Recurse -Force}};Write-Output 'Windows ZIP extraction passed preflight.'" >>"%LOG%" 2>&1
+exit /b %ERRORLEVEL%
+
+:CheckShortcutSupport
+"%POWERSHELL_EXE%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop';foreach($name in @('Video + Audio Downloader.lnk','Video Downloader.lnk')){$path=Join-Path $env:ROOT $name;if(Test-Path -LiteralPath $path){$item=Get-Item -LiteralPath $path -Force;if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw ('The existing shortcut path is unsafe: '+$name)}}};$shell=New-Object -ComObject WScript.Shell;$probe=Join-Path $env:RUNTIME ('shortcut-preflight-'+[Guid]::NewGuid().ToString('N')+'.lnk');try{$link=$shell.CreateShortcut($probe);$link.TargetPath=$env:POWERSHELL_EXE;$link.WorkingDirectory=$env:RUNTIME;$link.Save();if(-not(Test-Path -LiteralPath $probe -PathType Leaf)){throw 'Windows did not save a test shortcut.'};$readback=$shell.CreateShortcut($probe);if([IO.Path]::GetFullPath($readback.TargetPath) -ine [IO.Path]::GetFullPath($env:POWERSHELL_EXE)){throw 'Windows did not preserve the shortcut target.'}}finally{if(Test-Path -LiteralPath $probe){Remove-Item -LiteralPath $probe -Force}};Write-Output 'Windows shortcut creation and readback passed preflight.'" >>"%LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
 :CheckRootWritePermission

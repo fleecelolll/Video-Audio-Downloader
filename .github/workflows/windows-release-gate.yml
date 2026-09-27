@@ -35,13 +35,36 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify immediate prerequisite failures without downloads
+        shell: powershell
+        run: '& ".github/scripts/Test-PreDownloadChecks.ps1"'
+
+      - name: Prepare a clean release folder with spaces
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'Video Downloader release QA'
+          $zip = Join-Path $env:RUNNER_TEMP 'Video-Audio-Downloader-v1.0.14.zip'
+          if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $zip)) { throw 'Release QA paths must start empty.' }
+          & '.github/scripts/Build-ReleaseZip.ps1' -OutputPath $zip
+          Expand-Archive -LiteralPath $zip -DestinationPath $root
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "FLEECE_RELEASE_ROOT=$root`n", [Text.UTF8Encoding]::new($false))
+
       - name: Perform a clean private setup and app self-test through the confirmation prompt
         shell: cmd
-        run: echo Y| call Installer.bat --no-pause
+        run: echo Y| call "%FLEECE_RELEASE_ROOT%\Installer.bat" --no-pause
 
       - name: Verify the repair path against the installed runtime
         shell: cmd
-        run: Installer.bat --yes --no-pause
+        run: call "%FLEECE_RELEASE_ROOT%\Installer.bat" --yes --no-pause
+
+      - name: Verify and launch the installed folder-local shortcut
+        shell: powershell
+        run: '& ".github/scripts/Test-InstalledShortcut.ps1" -ReleaseRoot $env:FLEECE_RELEASE_ROOT'
+
+      - name: Download and convert a local media fixture on Windows 11 ARM
+        if: matrix.runner == 'windows-11-arm'
+        shell: powershell
+        run: '& "$env:FLEECE_RELEASE_ROOT\.runtime\python\python.exe" -I ".github/scripts/Test-DownloadWorkflow.py" "$env:FLEECE_RELEASE_ROOT"'
 
       - name: Upload diagnostics if a gate fails
         if: failure()
@@ -55,3 +78,6 @@ jobs:
             setup.log
             .runtime/error.log
             .runtime/logs/*.log
+            ${{ runner.temp }}/Video Downloader release QA/setup.log
+            ${{ runner.temp }}/Video Downloader release QA/.runtime/error.log
+            ${{ runner.temp }}/Video Downloader release QA/.runtime/logs/*.log

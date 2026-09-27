@@ -72,6 +72,8 @@ To remove Video + Audio Downloader, close it and delete the extracted folder. Th
 
 If setup stops, review `setup.log`, correct the listed problem, and run `Installer.bat` again. Setup reports success only after its dependencies, offline self-tests, and shortcut all pass.
 
+Before any runtime download, setup checks the bundled app source, Windows ZIP extraction, and the ability to create and read a folder-local shortcut. A predictable prerequisite failure stops immediately with a short **How to fix** instruction. A Python, PyPI package, FFmpeg, or Deno failure also stops at that stage; `setup.log` records the underlying command or download error. Re-extract a missing or damaged release file from the official ZIP rather than substituting an unverified download.
+
 If the `Video + Audio Downloader` shortcut does not open, run `Installer.bat` again and keep the complete extracted folder together. Setup recreates and validates the shortcut for the folder's current location.
 
 If one site stops working, run the latest `Installer.bat` to refresh the pinned downloader components before retrying.

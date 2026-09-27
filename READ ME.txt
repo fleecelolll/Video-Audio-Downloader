@@ -37,6 +37,10 @@ TROUBLESHOOTING
 
 If setup or the shortcut fails, review setup.log and run Installer.bat again. Success is shown only after the dependencies, offline self-tests, and shortcut all pass. Keep the complete extracted folder together.
 
+Before downloading Python or other large components, setup checks the bundled app source, Windows ZIP extraction, and shortcut support. If one of these fails, the setup window shows a short "How to fix" instruction immediately. A failed Python, package, FFmpeg, or Deno step also stops at that step and gives a targeted repair hint rather than waiting until the end.
+
+If setup says the app source is missing or unsafe, re-extract the complete official ZIP. If it says ZIP extraction is unavailable, repair Windows PowerShell or its Microsoft.PowerShell.Archive module. If shortcut creation fails, check for a broken existing shortcut or folder write access. Download-stage errors should be diagnosed using the last error in setup.log; no downloaded runtime is accepted unless its SHA-256 check passes.
+
 If one site stops working, run the latest Installer.bat to refresh the pinned downloader components before retrying.
 
 LICENSE

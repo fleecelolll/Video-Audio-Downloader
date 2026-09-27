@@ -69,3 +69,4 @@ $longRoot = New-Fixture ('long-path-' + ('x' * 80)) -WithLicense -WithSource
 Assert-EarlyFailure $longRoot (Invoke-Fixture $longRoot) 'complete app folder path must be 72 characters or fewer'
 
 Write-Host 'All no-download prerequisite failure checks passed in paths containing spaces.'
+exit 0

@@ -23,7 +23,7 @@ USE
 
 SETUP DETAILS
 
-Setup keeps official Python 3.14.7, PySide6-Essentials, yt-dlp, yt-dlp-ejs, FFmpeg, FFprobe, Deno, settings, and app-specific files private to this folder. It does not require administrator access, change PATH, or install global Python packages. Downloaded runtime archives are verified before use.
+Setup keeps official Python 3.14.7, PySide6-Essentials, yt-dlp, yt-dlp-ejs, FFmpeg, FFprobe, Deno, settings, and app-specific files private to this folder. It does not require administrator access, change PATH, or install global Python packages. Downloaded runtime archives and dependency wheels are SHA-256 verified before use. Setup automatically uses the x64 or ARM64 dependency lock and verifies that bundled lock before installation or repair.
 
 Setup creates and validates a folder-local Video + Audio Downloader shortcut that starts the app directly with this folder's private runtime. Run Installer.bat again to repair setup or after moving the complete folder. The selected save folder, format, and quality are preserved.
 

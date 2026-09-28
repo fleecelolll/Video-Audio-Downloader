@@ -5,13 +5,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
-# Match the five-file public release contract; never recursively ZIP the checkout.
+# Match the seven-file public release contract; never recursively ZIP the checkout.
 $releaseFiles = @(
     'Installer.bat',
     'LICENSE',
     'READ ME.txt',
     'Video + Audio Downloader.pyw',
-    'Video Downloader.pyw'
+    'Video Downloader.pyw',
+    'requirements-win-x64.txt',
+    'requirements-win-arm64.txt'
 )
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $output = [IO.Path]::GetFullPath($OutputPath)

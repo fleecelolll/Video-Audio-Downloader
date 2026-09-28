@@ -134,6 +134,7 @@ set "DENO_URL=https://github.com/denoland/deno/releases/download/v2.9.7/deno-aar
 set "DENO_SHA256=C4C4AC8BFDAA37814BDA5C05FC9CDF2154904E2EF8277673A30BDCEAAA649807"
 
 :ArchitectureReady
+set "PIP_REQUIREMENTS=%ROOT%requirements-win-%ARCH%.txt"
 if not exist "%POWERSHELL_EXE%" (
     set "FAIL_MESSAGE=Trusted Windows PowerShell is missing from the system folder."
     set "REPAIR_HINT=Repair Windows system components, then retry from a fresh official ZIP."
@@ -648,6 +649,8 @@ exit /b 0
 :InstallPythonPackages
 if not defined APP_PY exit /b 1
 if not exist "%APP_PY%" exit /b 1
+call :ValidatePipRequirements
+if errorlevel 1 exit /b 1
 call :CurrentPackagesFullyHealthy
 if not errorlevel 1 exit /b 0
 call :BeginPackageTransaction
@@ -736,8 +739,21 @@ if errorlevel 1 exit /b 1
 if exist "%PACKAGE_BACKUP_MARKER%" del /f /q "%PACKAGE_BACKUP_MARKER%" >nul 2>nul
 exit /b %PACKAGE_TRANSACTION_CODE%
 
+:ValidatePipRequirements
+set "PIP_REQUIREMENTS_SHA256="
+if /I "%ARCH%"=="x64" set "PIP_REQUIREMENTS_SHA256=e91234bb8eb9dbe6555a9a03101500e065488834e1d40939630c99acfb415f20"
+if /I "%ARCH%"=="arm64" set "PIP_REQUIREMENTS_SHA256=9dd5fa00bc1f5192291ab0281c75a975284ba141222f7dee51af5249606625cd"
+if not defined PIP_REQUIREMENTS_SHA256 exit /b 1
+"%APP_PY%" -I -c "import hashlib, os, stat; from pathlib import Path; path=Path(os.environ['PIP_REQUIREMENTS']); info=path.stat(follow_symlinks=False); assert stat.S_ISREG(info.st_mode) and not path.is_symlink() and not (getattr(info, 'st_file_attributes', 0) & 1024), 'Dependency lock is unsafe'; assert hashlib.sha256(path.read_bytes()).hexdigest() == os.environ['PIP_REQUIREMENTS_SHA256'], 'Dependency lock SHA-256 mismatch'" >>"%LOG%" 2>&1
+if not errorlevel 1 exit /b 0
+set "LOG_MESSAGE=The reviewed dependency lock is missing, unsafe, or changed. Re-extract the complete official ZIP."
+call :LogCurrent
+exit /b 1
+
 :InstallEmbeddedPackages
 call :ValidateEmbeddedPython
+if errorlevel 1 exit /b 1
+call :ValidatePipRequirements
 if errorlevel 1 exit /b 1
 call :HasPinnedPySide
 if errorlevel 1 goto InstallFullEmbeddedPackages
@@ -751,7 +767,7 @@ call :RemoveDirectoryRobust "%LOCAL_SITE%"
 if errorlevel 1 exit /b 1
 mkdir "%LOCAL_SITE%" >>"%LOG%" 2>&1
 if not exist "%LOCAL_SITE%" exit /b 1
-"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" %YTDLP_RUNTIME_PACKAGES% %YTDLP_ARCH_PACKAGE% >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --require-hashes --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" -r "%PIP_REQUIREMENTS%" >>"%LOG%" 2>&1
 set "PACKAGE_INSTALL_CODE=%ERRORLEVEL%"
 
 if not "%PACKAGE_INSTALL_CODE%"=="0" goto RepairPythonPackages
@@ -768,7 +784,7 @@ call :RemoveDirectoryRobust "%LOCAL_SITE%"
 if errorlevel 1 exit /b 1
 mkdir "%LOCAL_SITE%" >>"%LOG%" 2>&1
 if not exist "%LOCAL_SITE%" exit /b 1
-"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --force-reinstall --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" "%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION%" "yt-dlp==%YTDLP_VERSION%" "yt-dlp-ejs==%YTDLP_EJS_VERSION%" %YTDLP_RUNTIME_PACKAGES% %YTDLP_ARCH_PACKAGE% >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check install --upgrade --force-reinstall --no-cache-dir --only-binary=:all: --require-hashes --index-url "%PYPI_INDEX%" --target "%LOCAL_SITE%" -r "%PIP_REQUIREMENTS%" >>"%LOG%" 2>&1
 
 if errorlevel 1 exit /b 1
 call :VerifyPythonPackages

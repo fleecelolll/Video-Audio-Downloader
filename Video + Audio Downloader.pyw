@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import traceback
 from ctypes import wintypes
 from importlib import metadata
@@ -15,7 +16,7 @@ from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 APP_NAME = "Video + Audio Downloader"
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 PYSIDE_VERSION = "6.11.2"
 YTDLP_VERSION = "2026.8.19"
 YTDLP_EJS_VERSION = "0.8.0"
@@ -23,6 +24,7 @@ FFMPEG_VERSION = "9.0.2"
 DENO_VERSION = "2.9.7"
 FRAGMENT_WORKERS = max(1, min(4, (os.cpu_count() or 2) // 2))
 PROCESS_READ_CHUNK_BYTES = 65536
+PROCESS_EVENT_READ_BYTES = 8192
 PROCESS_LINE_HEAD_CHARS = 4096
 PROCESS_LINE_TAIL_CHARS = 4096
 PROCESS_LINE_TRUNCATION = " ... [output truncated; beginning and end shown] ... "
@@ -311,12 +313,20 @@ def yt_dlp_arguments(*arguments):
 
 
 def is_valid_download_url(url):
+    if not isinstance(url, str) or not url or any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in url
+    ):
+        return False
     try:
         parsed_url = urlparse(url)
         return (
             parsed_url.scheme.lower() in {"http", "https"}
             and bool(parsed_url.netloc)
             and bool(parsed_url.hostname)
+            and parsed_url.username is None
+            and parsed_url.password is None
+            and (parsed_url.port is None or 1 <= parsed_url.port <= 65535)
         )
     except ValueError:
         return False
@@ -414,9 +424,15 @@ def download_failure_message(messages):
             "connection timed out",
             "network is unreachable",
             "temporary failure in name resolution",
+            "getaddrinfo failed",
+            "failed to resolve",
+            "read timed out",
+            "connection refused",
         )
     ):
         return "The network request failed. Check the connection and try again."
+    if "certificate verify failed" in output or "certificate_verify_failed" in output:
+        return "The secure connection could not be verified. Check the system clock and network settings."
     if "no space left on device" in output or "disk full" in output:
         return "The save drive is full. Free some space and try again."
     if "permission denied" in output or "access is denied" in output:
@@ -1020,6 +1036,7 @@ class SitesWindow(QWidget):
 
 
 class VideoDownloader(QMainWindow):
+    tree_stop_finished = Signal(object)
     PROGRESS_RE = re.compile(
         r"PROGRESS:\s*([0-9.]+)%\|([^|]*)\|([^|]*)"
     )
@@ -1058,7 +1075,11 @@ class VideoDownloader(QMainWindow):
         self.process_decoder = None
         self.process_line_buffer = ""
         self.process_messages = []
+        self._output_read_pending = False
+        self._tree_stop_process = None
+        self.tree_stop_finished.connect(self._complete_force_stop)
         self.last_log_message = ""
+        self._settings_error_reported = False
         self.sites_window = None
         self.components_ready = True
         self.component_issues = []
@@ -1495,6 +1516,16 @@ class VideoDownloader(QMainWindow):
         self.settings.setValue("format", self.format_dropdown.currentText())
         self.settings.setValue("quality", self.quality_dropdown.currentText())
         self.settings.sync()
+        if self.settings.status() != QSettings.Status.NoError:
+            if not self._settings_error_reported:
+                self.append_log(
+                    "Local preferences could not be saved. Check that the app folder "
+                    "is writable. The current selections still apply to this session."
+                )
+            self._settings_error_reported = True
+            return False
+        self._settings_error_reported = False
+        return True
 
     @staticmethod
     def command_works(command):
@@ -1665,6 +1696,8 @@ class VideoDownloader(QMainWindow):
         return True
 
     def start_download(self):
+        if self.running:
+            return
         url = self.url_input.text().strip()
         if not url:
             self.status_label.setText("Paste a link")
@@ -1689,6 +1722,7 @@ class VideoDownloader(QMainWindow):
         )
         self.process_line_buffer = ""
         self.process_messages = []
+        self._output_read_pending = False
 
         args = build_download_arguments(
             url,
@@ -1701,10 +1735,17 @@ class VideoDownloader(QMainWindow):
         self.process.setProcessEnvironment(qprocess_environment())
         self.process.setWorkingDirectory(str(APP_DIR))
         self.process.setProcessChannelMode(QProcess.MergedChannels)
-        self.process.started.connect(self.process_started)
-        self.process.readyReadStandardOutput.connect(self.read_process_output)
-        self.process.finished.connect(self.process_finished)
-        self.process.errorOccurred.connect(self.process_error)
+        process = self.process
+        process.started.connect(lambda process=process: self.process_started(process))
+        process.readyReadStandardOutput.connect(
+            lambda process=process: self.read_process_output(process)
+        )
+        process.finished.connect(
+            lambda code, status, process=process: self.process_finished(code, status, process)
+        )
+        process.errorOccurred.connect(
+            lambda error, process=process: self.process_error(error, process)
+        )
 
         self.running = True
         self.download_button.setText("Cancel")
@@ -1722,15 +1763,23 @@ class VideoDownloader(QMainWindow):
             enabled and self.format_dropdown.currentText() != "MP3"
         )
 
-    def read_process_output(self):
+    def read_process_output(self, process=None):
+        if process is not None and self.process is not process:
+            return
         if not self.process or self.process_decoder is None:
             return
-
-        while True:
-            data = bytes(self.process.read(PROCESS_READ_CHUNK_BYTES))
-            if not data:
-                break
+        process = self.process
+        data = bytes(process.read(PROCESS_EVENT_READ_BYTES))
+        if data:
             self.consume_process_text(self.process_decoder.decode(data))
+        if process.bytesAvailable() and not self._output_read_pending:
+            self._output_read_pending = True
+            QTimer.singleShot(0, lambda process=process: self._continue_process_output(process))
+
+    def _continue_process_output(self, process):
+        if self.process is process:
+            self._output_read_pending = False
+            self.read_process_output(process)
 
     def flush_process_output(self):
         if not self.process or self.process_decoder is None:
@@ -1747,12 +1796,9 @@ class VideoDownloader(QMainWindow):
         self.consume_process_text(text, final=True)
 
     def consume_process_text(self, text, final=False):
-        self.process_line_buffer += text
-
-        while "\n" in self.process_line_buffer:
-            raw_line, self.process_line_buffer = self.process_line_buffer.split(
-                "\n", 1
-            )
+        lines = (self.process_line_buffer + text).split("\n")
+        self.process_line_buffer = lines.pop()
+        for raw_line in lines:
             self.handle_process_line(raw_line.rstrip("\r"))
 
         if final and self.process_line_buffer:
@@ -1795,7 +1841,9 @@ class VideoDownloader(QMainWindow):
             del self.process_messages[:-200]
         self.append_log(clean_line)
 
-    def process_started(self):
+    def process_started(self, process=None):
+        if process is not None and self.process is not process:
+            return
         if self.process:
             self.process_pid = int(self.process.processId())
             if self.cancel_requested:
@@ -1833,11 +1881,40 @@ class VideoDownloader(QMainWindow):
         if not process:
             return
         process_id = int(process.processId()) or self.process_pid
-        self.kill_process_tree(process_id)
-        if process.state() != QProcess.NotRunning:
+        self._stop_process_tree_async(process, process_id)
+
+    def _stop_process_tree_async(self, process, process_id):
+        if self._tree_stop_process is process:
+            return
+        self._tree_stop_process = process
+
+        def stop_tree():
+            self.kill_process_tree(process_id)
+            try:
+                self.tree_stop_finished.emit(process)
+            except RuntimeError:
+                # The window can already be gone during application shutdown.
+                pass
+
+        try:
+            threading.Thread(target=stop_tree, name="DownloaderTreeStop", daemon=True).start()
+        except (OSError, RuntimeError):
+            self._complete_force_stop(process)
+
+    def _complete_force_stop(self, process):
+        if self.process is process and process.state() != QProcess.NotRunning:
             process.kill()
 
-    def process_finished(self, exit_code, exit_status):
+    def process_finished(self, exit_code, exit_status, process=None):
+        if process is not None and self.process is not process:
+            return
+        if self.process is not None and self.process.bytesAvailable() > PROCESS_EVENT_READ_BYTES:
+            process = self.process
+            self.read_process_output(process)
+            QTimer.singleShot(
+                0, lambda process=process: self.process_finished(exit_code, exit_status, process)
+            )
+            return
         self.flush_process_output()
         finished_process = self.process
         was_cancelled = self.cancel_requested
@@ -1845,7 +1922,7 @@ class VideoDownloader(QMainWindow):
         self.stop_timer.stop()
 
         if was_cancelled:
-            self.kill_process_tree(process_id)
+            self._stop_process_tree_async(finished_process, process_id)
 
         self.running = False
         self.download_button.setText("Download")
@@ -1871,7 +1948,9 @@ class VideoDownloader(QMainWindow):
         message = download_failure_message(self.process_messages)
         self.append_log(f"{message} (code {exit_code})")
 
-    def process_error(self, error):
+    def process_error(self, error, process=None):
+        if process is not None and self.process is not process:
+            return
         failed_process = self.process
         error_text = failed_process.errorString() if failed_process else str(error)
         if error == QProcess.FailedToStart:
@@ -1916,7 +1995,7 @@ class VideoDownloader(QMainWindow):
 
 
 def run_self_test(output_dir):
-    assert APP_VERSION == "1.0.15"
+    assert APP_VERSION == "1.0.16"
     output_dir = Path(output_dir).resolve()
     checks = []
 

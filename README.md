@@ -2,6 +2,10 @@
 
 # video + audio downloader
 
+Current audit update: **v1.0.16**. Includes app-specific bug fixes, bounded offline regression/performance tests, and shared setup hardening.
+
+All Fleece desktop tools use the same installation workflow: download the official ZIP, extract the entire folder, run `Installer.bat`, accept the bundled Terms/Tool License, wait for final checks, then open the folder-local shortcut. Setup installs a private runtime without changing system Python or requiring administrator access. Rerun it to repair or refresh a moved shortcut. Keep the full path at most 72 characters, without percent signs. Architecture support and extra components vary by tool; File Converter remains x64-only.
+
 A little tool I made with AI to download videos and audio from yt-dlp-supported sites locally on 64-bit Windows.
 
 <img src="Video%20%2B%20Audio%20Downloader.png" alt="Video + Audio Downloader app window" width="760">
